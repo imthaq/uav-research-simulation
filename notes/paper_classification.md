@@ -1,5 +1,4 @@
 # Paper Classification: UAV Research Repository
-*Last updated: 2026-06-19*
 
 This document categorizes all reviewed papers into their respective research tracks. Papers marked as SystemC-only, too old without replacement, or otherwise excluded from the research scope are omitted.
 
@@ -243,6 +242,125 @@ These papers support the multi-drone coordination, obstacle avoidance, navigatio
 
 ---
 
+## 3. Perception Uncertainty and Sensor Fusion in UAV Swarms
+ 
+These papers address how UAV swarms handle unreliable, noisy, or conflicting sensor data — covering false positive/negative mitigation, uncertainty-aware planning, and multi-modal sensor fusion architectures. They are distinct from the anti-drone and swarm safety tracks.
+ 
+---
+ 
+### 3.1 Camera-Radar Fusion with Radar Channel Extension and Dual-CBAM-FPN for Object Detection
+- **Year:** 2024
+- **Authors:** X. Sun, Y. Jiang, H. Qin, J. Li, Y. Ji
+- **Link:** https://doi.org/10.3390/s24165317
+- **Method:** Feature-level camera-radar fusion via dual-CBAM-FPN architecture
+- **Sensor/Perception Type:** Radar-Camera fusion
+- **False Positive Handling:** Multi-scale feature fusion and attention modules filter background clutter
+- **False Negative Handling:** Retains low-level radar features during extraction to prevent missing small targets
+- **Uncertainty Type:** Perception aliasing and misidentification
+- **Swarm-Level Metric:** None explicitly — focuses on object detection accuracy
+- **Limitation:** Focused on static target detection rather than dynamic swarm coordination
+- **Relevance:** Provides a foundational approach for improving raw perception reliability, critical before evaluating swarm-level decision-making. Establishes a strong baseline for building reliable multi-modal perception pipelines in UAV simulations.
+---
+ 
+### 3.2 Enabling Robots to Autonomously Search Dynamic Cluttered Post-Disaster Environments
+- **Year:** 2025
+- **Authors:** K. Rado, M. Baglioni, A. Jamshidnejad
+- **Link:** https://doi.org/10.48550/arxiv.2505.03283
+- **Method:** Integrated heuristic motion planning with uncertainty-aware Tube Model Predictive Control (TMPC)
+- **Sensor/Perception Type:** Generalized perception (bounded uncertainty)
+- **False Positive Handling:** Aggregates predicted trajectories into obstacle belts to create safe margins against phantom detections
+- **False Negative Handling:** Replanning mechanism rapidly adjusts when previously undetected dynamic obstacles appear
+- **Uncertainty Type:** Bounded perception uncertainty and external disturbances
+- **Swarm-Level Metric:** Mission time, target reachability, collision avoidance rates
+- **Limitation:** Tested primarily on general search and rescue robots rather than high-speed aerial swarms
+- **Relevance:** TMPC formulation provides a robust mathematical framework for maintaining safety despite known margins of perception error. Applying this to a simulated UAV swarm models how agents survive temporary sensor failures.
+---
+ 
+### 3.3 Advances and Challenges in Drone Detection and Classification Techniques: A State-of-the-Art Review
+- **Year:** 2023
+- **Authors:** U. Seidaliyeva, L. Ilipbayeva, K. Taissariyeva, N. Smailov, E. T. Matson
+- **Link:** https://doi.org/10.3390/s24010125
+- **Method:** Comprehensive state-of-the-art literature review
+- **Sensor/Perception Type:** Multimodal (Radar, RF, Acoustic, Camera)
+- **False Positive Handling:** Evaluates how fusing disjointed data streams filters out environmental noise like birds or weather
+- **False Negative Handling:** Demonstrates that multi-sensor networks mitigate the limited altitude and range coverage of single sensors
+- **Uncertainty Type:** Environmental degradation and target dynamic behavior
+- **Swarm-Level Metric:** Detection range and multi-target tracking scalability
+- **Limitation:** Provides architectural overviews rather than specific, deployable algorithms
+- **Relevance:** Definitive guide on why individual sensors fail and justifies the necessity of fusion for dependable swarm operations. Useful for defining theoretical error boundaries for simulation sensor models.
+---
+ 
+### 3.4 Multi-Sensory Data Fusion in Terms of UAV Detection in 3D Space
+- **Year:** 2022
+- **Authors:** J. Dudczyk, R. Czyba, K. Skrzypczyk
+- **Link:** https://doi.org/10.3390/s22124323
+- **Method:** Conditional complementary filtration and multi-stage clustering
+- **Sensor/Perception Type:** Radar, Radio system, ADS-B
+- **False Positive Handling:** Multi-stage clustering discards anomalous signatures that do not match known UAV profiles
+- **False Negative Handling:** Integrates active and passive detection to capture UAVs operating in radar blind spots
+- **Uncertainty Type:** Electromagnetic interference and spatial localization errors
+- **Swarm-Level Metric:** 3D spatial recognition range and multi-target classification
+- **Limitation:** Lacks integration with optical/camera systems, missing out on visual validation
+- **Relevance:** Validates a mathematical approach to filtering conflicted data streams in 3D space, useful for spatial uncertainty modeling. Relevant for simulating how swarms process overlapping, noisy signals.
+---
+ 
+### 3.5 Risk-Aware AI Architecture for BVLOS UAV Safety: Integrating Sensor Fusion and SATCOM
+- **Year:** 2026
+- **Authors:** Nick Barua
+- **Link:** https://www.preprints.org/manuscript/202604.0858
+- **Method:** Three-layer Risk-Aware UAV Safety Architecture (RASA)
+- **Sensor/Perception Type:** Multi-modal sensor fusion combined with SATCOM
+- **False Positive Handling:** AI-driven risk model weights sensor reliability against current environmental conditions
+- **False Negative Handling:** Leverages SATCOM data links to maintain situational awareness when local sensors fail
+- **Uncertainty Type:** Coupled perception and communication uncertainty
+- **Swarm-Level Metric:** Beyond Visual Line of Sight (BVLOS) safety coverage
+- **Limitation:** Conceptual framework without extensive multi-agent simulation data
+- **Relevance:** Directly models the interaction between perception uncertainty and system safety, providing a mechanism to quantify risk. Excellent theoretical foundation for scoring swarm safety and performance in dependability simulations.
+---
+ 
+### 3.6 A2C-LLM: An Actor-Critic-Enhanced Large Language Model for UAV Swarm Multi-Target Task Allocation
+- **Year:** 2026
+- **Authors:** Jie Bao, Yuping Zhang, Ronghao Zhang, Peng Zhang
+- **Link:** https://doi.org/10.3390/drones10060398
+- **Method:** Actor-Critic enhanced Large Language Model with a Markov Decision Process
+- **Sensor/Perception Type:** Environmental state and semantic perception
+- **False Positive Handling:** Critic network evaluates actions to filter out hallucinated or physically unfeasible tasks
+- **False Negative Handling:** Reinforcement learning feedback ensures the swarm adapts to dynamic targets missed by initial planning
+- **Uncertainty Type:** Semantic-numerical gap in dynamic environments
+- **Swarm-Level Metric:** Task completion rate and robustness in adversarial scenarios
+- **Limitation:** Focuses on high-level macro allocation rather than the raw physics of sensor fusion
+- **Relevance:** Demonstrates how swarms can safely execute complex tasks even when the initial semantic understanding of the environment is uncertain. Unique angle on handling cognitive and perception-based uncertainty at the swarm coordination level.
+---
+ 
+### 3.7 3D UAV Trajectory Planning for IoT Data Collection via Matrix-Based Evolutionary Computation
+- **Year:** 2024 (Oct 8)
+- **Authors:** Pei-Fa Sun, Yujae Song
+- **Link:** https://arxiv.org/pdf/2410.05759
+- **Method:** Matrix-Based Differential Evolution with Constraint Handle (MDE-CH)
+- **Sensor/Perception Type:** Distributed sensors
+- **False Positive Handling:** N/A
+- **False Negative Handling:** N/A
+- **Uncertainty Type:** N/A
+- **Swarm-Level Metric:** N/A
+- **Limitation:** Main focus is solving computational cost and energy consumption; prior approaches neglect 3D terrain impact
+- **Relevance:** MDE-CH enables optimal UAV trajectory planning under 3D terrain constraints, reducing computational cost and energy consumption. Outperforms MPSO and MGA matrix-based optimizers. Directly applicable for defining energy-efficient flight paths in our UAV systems.
+---
+ 
+### 3.8 UAV Collision Avoidance in Unknown Scenarios with Causal Representation Disentanglement
+- **Year:** 2024 (Dec 25)
+- **Authors:** Zhun Fan, Zihao Xia et al.
+- **Link:** https://www.mdpi.com/2504-446X/9/1/10
+- **Method:** Deep Reinforcement Learning (DRL) with Causal Representation Disentanglement (CRD) — separates causal from non-causal image features before feeding to the DRL model
+- **Sensor/Perception Type:** Onboard forward-facing camera and IMU; AirSim simulation
+- **False Positive Handling:** N/A
+- **False Negative Handling:** N/A
+- **Uncertainty Type:** N/A
+- **Swarm-Level Metric:** N/A
+- **Limitation:** Environmental factors not included (simulation only); model produces longest path to destination despite collision avoidance success
+- **Relevance:** Addresses DRL overfitting caused by redundant image features. CRD achieves significant improvements in navigation success rate and SPL metrics over standard CRL approaches. Useful for building generalizable collision avoidance systems that do not rely on seen environments.
+
+---
+
 ## Summary Table
 
 | # | Title | Year | Category |
@@ -270,3 +388,12 @@ These papers support the multi-drone coordination, obstacle avoidance, navigatio
 | 21 | A Learning Framework For Cooperative Collision Avoidance of UAV Swarms Leveraging Domain Knowledge | 2025 | UAV Swarm Safety Support |
 | 22 | An Evaluation of COTS-Based Radar for Very Small Drone Sense and Avoid Application | 2022 | UAV Swarm Safety Support |
 | 23 | Radar–Camera Fusion in Perspective View and Bird's Eye View for 3D Object Detection | 2025 | UAV Swarm Safety Support |
+| 24 | Camera-Radar Fusion with Radar Channel Extension and Dual-CBAM-FPN for Object Detection | 2024 | Perception Uncertainty and Sensor Fusion |
+| 25 | Enabling Robots to Autonomously Search Dynamic Cluttered Post-Disaster Environments | 2025 | Perception Uncertainty and Sensor Fusion |
+| 26 | Advances and Challenges in Drone Detection and Classification Techniques: A State-of-the-Art Review | 2023 | Perception Uncertainty and Sensor Fusion |
+| 27 | Multi-Sensory Data Fusion in Terms of UAV Detection in 3D Space | 2022 | Perception Uncertainty and Sensor Fusion |
+| 28 | Risk-Aware AI Architecture for BVLOS UAV Safety: Integrating Sensor Fusion and SATCOM | 2026 | Perception Uncertainty and Sensor Fusion |
+| 29 | A2C-LLM: An Actor-Critic-Enhanced Large Language Model for UAV Swarm Multi-Target Task Allocation | 2026 | Perception Uncertainty and Sensor Fusion |
+| 30 | 3D UAV Trajectory Planning for IoT Data Collection via Matrix-Based Evolutionary Computation | 2024 | Perception Uncertainty and Sensor Fusion |
+| 31 | UAV Collision Avoidance in Unknown Scenarios with Causal Representation Disentanglement | 2024 | Perception Uncertainty and Sensor Fusion |
+ 
