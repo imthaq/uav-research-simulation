@@ -22,9 +22,11 @@ Three public infrared UAV datasets
 
 <hr>
 
-# Paper Title: When Uncertainty Leads to Unsafety: Empirical Insights into the Role of Uncertainty in Unmanned Aerial Vehicle Safety
+# Paper Title: 
+When Uncertainty Leads to Unsafety: Empirical Insights into the Role of Uncertainty in Unmanned Aerial Vehicle Safety
 
-# Simulation Used: Over 5,000 simulated PX4-Autopilot/PX4-Avoidance flights generated via the Surrealist search-based test generation tool in Gazebo
+# Simulation Used:
+Over 5,000 simulated PX4-Autopilot/PX4-Avoidance flights generated via the Surrealist search-based test generation tool in Gazebo
 
 <hr>
 
