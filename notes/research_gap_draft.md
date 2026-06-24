@@ -22,5 +22,17 @@
 
 *Research Gap*: NIL I believe it has addressed most of the challenges and solved them in  an effective way.  Moreover this paper is more focused on the concept of optimizing different mathematical concepts for optimized tragectory planning of the UAVs.
 
+*Title* : VISION-BASED NEIGHBOR SELECTION METHOD FOR OCCLUSION-RESILIENT UNCREWED AERIAL VEHICLE SWARM COORDINATION IN THREE-DIMENSIONAL
+ENVIRONMENTS.
+ 
+
+*Research Gap*: The Research gap we can focus on any of the following aspects can be that in larger swarms (union < 1 )above 50 agents, Figure 2d) results from inconsistent neighbor connections. Conversely, Delaunay selection’s spatially balanced tetrahedral mesh ensures perfect cohesion (union = 1) across all swarm sizes and high alignment (above 0.9) for larger swarms. However, it shows slightly lower alignment (around 0.85) in small swarms due to sparse connections.
+
+
+
+*Title* : The influence of limited visual sensing on the Reynolds flocking algorithm
+
+*Research Gap*: The research gap which we can focus on is by trying to implement this approach in real world scenario where we also consider the external factors which can affect  the performance of UAV expanding the research.
+
 
 
