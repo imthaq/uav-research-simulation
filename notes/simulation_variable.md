@@ -36,8 +36,9 @@ Three public infrared UAV datasets
 <hr>
 
 # Paper Title : 
- VISION-BASED NEIGHBOR SELECTION METHOD FOR OCCLUSION-RESILIENT UNCREWED AERIAL VEHICLE SWARM COORDINATION IN THREE-DIMENSIONAL
+VISION-BASED NEIGHBOR SELECTION METHOD FOR OCCLUSION-RESILIENT UNCREWED AERIAL VEHICLE SWARM COORDINATION IN THREE-DIMENSIONAL
 ENVIRONMENTS.
 
-# Simulation Used : Two Simulation Environments have been used. The first is the point mass environment implemented in pure Python, where agents are modeled as material points governed by simplified kinematics. Alternatively, the second environment, powered by Gazebo (Gazebo Classic), offers a physics- based simulation. Considering three-dimensional maneuverability, target applications mentioned in Section 1, and market availability, a quadrotor was selected as the drone type for our research.
+# Simulation Used :
+Two Simulation Environments have been used. The first is the point mass environment implemented in pure Python, where agents are modeled as material points governed by simplified kinematics. Alternatively, the second environment, powered by Gazebo (Gazebo Classic), offers a physics- based simulation. Considering three-dimensional maneuverability, target applications mentioned in Section 1, and market availability, a quadrotor was selected as the drone type for our research.
 
