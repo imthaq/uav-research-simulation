@@ -31,7 +31,8 @@ Three public infrared UAV datasets
 # Paper Title:
  The influence of limited visual sensing on the Reynolds flocking algorithm
 
-# Simulation Used: we apply a Monte-Carlo method that repeatedly selects random samples of the initial conditions for the flock, i.e. initial positions and velocities of the agents. A batch of 100 simulations is run, and  the final score is the average over the batch.
+# Simulation Used: 
+we apply a Monte-Carlo method that repeatedly selects random samples of the initial conditions for the flock, i.e. initial positions and velocities of the agents. A batch of 100 simulations is run, and  the final score is the average over the batch.
 
 <hr>
 
