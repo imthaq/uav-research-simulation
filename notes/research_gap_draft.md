@@ -5,6 +5,23 @@
 *Research Gap* : One thing we could focus on through this research is that UAV tends to take the longest path possible to reach its destination, making it less energy efficient as well. We can focus on this aspect of the research making it more effective and better in this regard by improving the path planning of the UAV.
 
 
+*Swarm Level Outcomes* :
+
+- collision risk : Evaluated via a negative collision reward (r-collision = -10) during training 
+
+- formation error: NIL
+
+- mission success:  Quantified using the "Fleet Success Rate" and  “Individual Success Rate”
+
+- response time: Not Given
+
+- unnecessary avoidance: Addressed and minimized by using an "Extra Distance" metric
+
+- missed response: Prevented by implementing a safety-distance boundary threshold (d-safe= 5 meters)
+
+- swarm stability: NIL
+
+
 *Title* : An Uncertainty Quantization-Based Method for Anti-UAV Detection in Infrared Images
 
 *Research Gap* : The research gap it has is that it fails at identifying the object correctly which is located at a very long distance from  the radar. We could  try to resolve this problem and also decrease the energy consumption by incorporating green code into the software.
@@ -22,17 +39,31 @@
 
 *Research Gap*: NIL I believe it has addressed most of the challenges and solved them in  an effective way.  Moreover this paper is more focused on the concept of optimizing different mathematical concepts for optimized tragectory planning of the UAVs.
 
-*Title* : VISION-BASED NEIGHBOR SELECTION METHOD FOR OCCLUSION-RESILIENT UNCREWED AERIAL VEHICLE SWARM COORDINATION IN THREE-DIMENSIONAL
-ENVIRONMENTS.
- 
-
-*Research Gap*: The Research gap we can focus on any of the following aspects can be that in larger swarms (union < 1 )above 50 agents, Figure 2d) results from inconsistent neighbor connections. Conversely, Delaunay selection’s spatially balanced tetrahedral mesh ensures perfect cohesion (union = 1) across all swarm sizes and high alignment (above 0.9) for larger swarms. However, it shows slightly lower alignment (around 0.85) in small swarms due to sparse connections.
 
 
+*Title* : Radar and Camera Fusion for Object Detection and Tracking: A Comprehensive Survey 
 
-*Title* : The influence of limited visual sensing on the Reynolds flocking algorithm
-
-*Research Gap*: The research gap which we can focus on is by trying to implement this approach in real world scenario where we also consider the external factors which can affect  the performance of UAV expanding the research.
+*Research Gap*: As a survey rather than an experimental paper, it does not itself test swarm-density, multi-UAV occlusion, or false-alarm-rate scenarios - confirming this remains an open gap for our work to address.
 
 
+*Title* : Deep Camera-Radar Fusion with an Attention Framework for Autonomous Vehicle Vision in Foggy Weather Conditions
+
+*Research Gap*: Automotive, single-target, and weather-only scope leaves multi-UAV swarm density, inter-UAV occlusion, and clutter-driven false alarms unaddressed.
+
+
+*Title* : An Uncertainty Quantization-Based Method for Anti-UAV Detection in Infrared Images
+
+*Research Gap*: As the first uncertainty-modeling approach in this domain, it is confined to a single sensor and single target, leaving multi-UAV, multi-sensor swarm uncertainty handling unexplored.
+
+
+
+*Title* : When Uncertainty Leads to Unsafety: Empirical Insights into the Role of Uncertainty in Unmanned Aerial Vehicle Safety
+
+*Research Gap*: Single-UAV, single-sensor (camera-based obstacle avoidance), correlational rather than algorithmic, and with no swarm-scale or multi-sensor fusion - leaving exactly the multi-UAV, multi-sensor dependability gap our work targets.
+
+
+
+
+Summary: 
+Most the gap we found from the above mentioned research papers are mostly related to UAV detection through radar, UAV swarm formation, sensors error, testing of UAVs through software simulation while leaving out different environmental factors which may effect the performance of the UAVs in real world scenario. Most of these research papers do not cover false positive, false negatives errors, sensor dropout, latency and fusion reliability. Moreover most of the perception errors are widely ignored, additionally also ignoring the swarm formation relationship directly with different perception level which induces the factor of uncertainty in the UAVs affecting the swarm flight as well while also increasing the risk of collision. Our main gap to study is regarding how perception level uncertainty affects swarm level safety and performance.
 
