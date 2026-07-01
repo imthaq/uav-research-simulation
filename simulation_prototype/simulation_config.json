@@ -1,0 +1,70 @@
+{
+  "world": {
+    "width": 100.0,
+    "height": 100.0,
+    "target": { "x": 90.0, "y": 90.0 },
+    "obstacle": { "x": 50.0, "y": 50.0, "radius": 5.0 }
+  },
+
+  "swarm": {
+    "num_uavs": 4,
+    "start_positions": [
+      [5.0, 5.0],
+      [5.0, 15.0],
+      [15.0, 5.0],
+      [15.0, 15.0]
+    ],
+    "uav_speed": 2.0,
+    "desired_formation_spacing": 8.0
+  },
+
+  "sim": {
+    "dt": 0.2,
+    "max_steps": 600,
+    "seed": 42
+  },
+
+  "sensing": {
+    "sensor_range": 15.0,
+    "collision_distance": 1.5,
+    "near_miss_distance": 3.5,
+    "goal_tolerance": 2.0
+  },
+
+  "control": {
+    "goal_gain": 1.0,
+    "avoidance_gain": 6.0,
+    "tangential_gain": 4.0
+  },
+
+  "scenarios": {
+    "baseline": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0
+    },
+    "false_positive": {
+      "false_positive_rate": 0.08,
+      "false_negative_rate": 0.0
+    },
+    "false_negative": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.25
+    },
+    "sensor_noise": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 1.5
+    },
+    "latency": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 5
+    },
+    "sensor_dropout": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "dropout_prob": 0.02,
+      "dropout_duration_steps": 8
+    }
+  }
+}
