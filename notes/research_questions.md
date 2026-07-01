@@ -1,6 +1,6 @@
 ﻿­Draft of the few Research papers questions.
 
-1) Why UAV drones are unable to maintain an ideal swarm formation while ensuring collision free formation and alignment?
+1) Why UAV drones are unable to maintain an ideal swarm formation while ensuring collision free formation and alignment, How long can they maintain this formation?
 
 Hypothesis : UAVs swarm formations fails when different environmental factors affect with their mode of communication such as inference of radar signal from external sources e.g UV radiations, extreme weather conditions such as typhoon etc.
 
