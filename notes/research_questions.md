@@ -1,4 +1,4 @@
-﻿Draft of the few Research papers questions.
+﻿­Draft of the few Research papers questions.
 
 1) Why UAV drones are unable to maintain an ideal swarm formation while ensuring collision free formation and alignment?
 
@@ -22,4 +22,10 @@ Hypothesis: Even though LiDAR acts as  a better alternative to simple vision or 
 
 Hypothesis: Algorithm based solutions are less power consumption heavy and act according to specific set of instructions provided to it and are suitable to simple daily life tasks. Whereas ML models  are more cost and power consumption heavy while also requiring a large dataset on which we have to train our model during our entire time of flight.
 
+6) Why do false positive even occur ? How does it affect the performance of the UAV especially in swarm based formation scenarios ?
 
+Hypothesis: In radar based UAVs the UAV is manufactured in such a way to only detect and avoid the obstacles. It is not trained to determine which obstacles to avoid and which not to leading to UAV degraded performance which causes the UAV to deviate from its original goal.
+
+7) How long Long Short-Term Memory (LSTM) autoencoder accurately detect and isolate intermittent sensor dropouts from noisy, real-time UAV telemetry data without generating false positives ?
+
+Hypothesis: The reconstruction error threshold of the LSTM autoencoder can dynamically adapt to ambient sensor noise without triggering false alarms.
