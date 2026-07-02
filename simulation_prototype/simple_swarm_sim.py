@@ -441,7 +441,7 @@ def main():
     parser = argparse.ArgumentParser(description="2D UAV swarm perception-error simulation")
     parser.add_argument("--config", default="simulation_config.json")
     parser.add_argument("--scenario", default=None, help="Run just one scenario instead of all")
-    parser.add_argument("--log", default="simulation_log.csv")
+    parser.add_argument("--log", default="logs/simulation_log.csv")
     args = parser.parse_args()
 
     with open(args.config) as f:
