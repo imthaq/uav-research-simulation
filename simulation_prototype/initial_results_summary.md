@@ -41,8 +41,7 @@ If you notice even in 2 UAVs Drone scenario it passed the testcases of “false_
 - 18, 3 for each scenario.
 
 * what metrics were collected
-The following mertics were collected and updated to the .csv files
-
+- The following mertics were collected and updated to the .csv files
 "scenario",
 "run_number",
 "false_positive_rate",
@@ -70,6 +69,6 @@ Which perception error caused the most problem?
 
 What needs improvement in the simulation? 
 
--If we look at the results most the mission_success rate ends up being false meaning no drone ever reaches the result. This is the first thing that need to be improved.
+- If we look at the results most the mission_success rate ends up being false meaning no drone ever reaches the result. This is the first thing that need to be improved.
 
--During sensor dropout the detection misses a lot of information which need to be retained to perform the best possible results. Therefore there should be somekind of memory factor which keep in storage most of the info.
+- During sensor dropout the detection misses a lot of information which need to be retained to perform the best possible results. Therefore there should be somekind of memory factor which keep in storage most of the info.
