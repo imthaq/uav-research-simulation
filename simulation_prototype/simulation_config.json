@@ -15,12 +15,14 @@
       [15.0, 15.0]
     ],
     "uav_speed": 2.0,
-    "desired_formation_spacing": 8.0
+    "desired_formation_spacing": 8.0,
+    "safety_distance": 2.0
   },
 
   "sim": {
     "dt": 0.2,
     "max_steps": 600,
+    "duration_seconds": 120.0,
     "seed": 42
   },
 
@@ -35,6 +37,15 @@
     "goal_gain": 1.0,
     "avoidance_gain": 6.0,
     "tangential_gain": 4.0
+  },
+
+  "perception_errors": {
+    "false_positive_rate": 0.0,
+    "false_negative_rate": 0.0,
+    "position_noise_std": 0.0,
+    "latency_steps": 0,
+    "dropout_prob": 0.0,
+    "dropout_duration_steps": 8
   },
 
   "scenarios": {
