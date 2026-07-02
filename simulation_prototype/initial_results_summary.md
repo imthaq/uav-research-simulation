@@ -29,7 +29,7 @@ If you notice even in 2 UAVs Drone scenario it passed the testcases of “false_
 
 ## 2 Day Scenario Testing Results: 
 
--What scenarios were tested? 
+What scenarios were tested? 
 1. Baseline with no perception error
 2. False positive scenario
 3. False negative scenario
@@ -37,10 +37,10 @@ If you notice even in 2 UAVs Drone scenario it passed the testcases of “false_
 5. Latency scenario
 6. Sensor dropout scenario
 
-* How many runs were performed ?
+ How many runs were performed ?
 - 18, 3 for each scenario.
 
-* what metrics were collected
+ What metrics were collected ?
 - The following mertics were collected and updated to the .csv files
 "scenario",
 "run_number",
