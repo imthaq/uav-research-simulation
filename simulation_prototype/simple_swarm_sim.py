@@ -25,6 +25,14 @@ class Perception:
         self.sensor_range = sensor_range
         self._dropout_remaining = 0  # steps left in an ongoing sensor blackout
 
+        # Diagnostics describing what happened on the most recent process()
+        # call, so the simulation can log *why* a detection set looks the
+        # way it does (used to populate the "error_type" log column).
+        self.last_dropout = False
+        self.last_false_positive = False
+        self.last_missed_ids = []
+        self.last_noise_applied = False
+
     def _apply_noise(self, d, uav_pos):
         """Jitters a detection's perceived position (and re-derives distance)
         to emulate sensor/ranging noise, e.g. GPS or vision-based localization error."""
@@ -50,24 +58,40 @@ class Perception:
                 "distance": r, "is_phantom": True}
 
     def process(self, true_detections, uav_pos):
+        # Reset per-step diagnostics.
+        self.last_dropout = False
+        self.last_false_positive = False
+        self.last_missed_ids = []
+        self.last_noise_applied = False
+
         # Sensor dropout: an ongoing or newly-triggered blackout means the
         # sensor delivers nothing at all this step (no real detections, no phantoms).
         if self._dropout_remaining > 0:
             self._dropout_remaining -= 1
+            self.last_dropout = True
             return []
         if self.rng.random() < self.p.get("dropout_prob", 0.0):
             self._dropout_remaining = max(self.p.get("dropout_duration_steps", 5) - 1, 0)
+            self.last_dropout = True
             return []
 
         false_negative_rate = self.p.get("false_negative_rate", 0.0)
-        perceived = [d for d in true_detections if self.rng.random() >= false_negative_rate]
+        perceived = []
+        for d in true_detections:
+            if self.rng.random() >= false_negative_rate:
+                perceived.append(d)
+            else:
+                self.last_missed_ids.append(d["id"])
 
         if self.p.get("position_noise_std", 0.0) > 0:
             perceived = [self._apply_noise(d, uav_pos) for d in perceived]
+            if perceived:
+                self.last_noise_applied = True
 
         phantom = self._maybe_phantom(uav_pos)
         if phantom is not None:
             perceived.append(phantom)
+            self.last_false_positive = True
 
         return perceived
 
@@ -205,10 +229,18 @@ class Simulation:
     def step(self, t):
         new_pos = [list(p) for p in self.pos]
         formation_dists = []
+        step_info = [None] * self.num_uavs  # per-UAV data needed for logging, filled in below
 
         for i in range(self.num_uavs):
             if self.reached_goal[i]:
-                self.log_rows.append(self._log_row(t, i, "at_goal"))
+                step_info[i] = {
+                    "perceived": [],
+                    "perceived_obstacle": None,
+                    "event": "at_goal",
+                    "error_type": "none",
+                    "unnecessary_avoidance": False,
+                    "missed_response": False,
+                }
                 continue
 
             true_dets = self._true_detections_for(i)
@@ -232,19 +264,50 @@ class Simulation:
 
             vx, vy, any_det, triggered_real, phantom_only = self._steer(i, perceived)
 
-            if any_det and phantom_only:
+            unnecessary_avoidance = any_det and phantom_only
+            if unnecessary_avoidance:
                 self.unnecessary_avoidance_count += 1
             if triggered_real:
                 self.avoidance_action_count += 1
+
+            missed_response = False
             for d in true_dets:
                 if d["distance"] <= self.near_miss_distance and d["id"] not in perceived_ids:
+                    missed_response = True
                     self.missed_response_count += 1
 
             new_pos[i][0] = min(max(new_pos[i][0] + vx * self.dt, 0.0), self.cfg["world"]["width"])
             new_pos[i][1] = min(max(new_pos[i][1] + vy * self.dt, 0.0), self.cfg["world"]["height"])
 
             event = "avoidance" if triggered_real else ("false_avoidance" if any_det and phantom_only else "move")
-            self.log_rows.append(self._log_row(t, i, event, perceived))
+
+            # Which perception-error mechanism(s) fired for this UAV this step
+            # (based on the freshly generated sensor reading, not the delayed
+            # one the controller acts on).
+            perc = self.perception[i]
+            errors = []
+            if perc.last_dropout:
+                errors.append("dropout")
+            if perc.last_false_positive:
+                errors.append("false_positive")
+            if perc.last_missed_ids:
+                errors.append("false_negative")
+            if perc.last_noise_applied:
+                errors.append("position_noise")
+            if self.latency_steps > 0:
+                errors.append("latency")
+            error_type = "+".join(errors) if errors else "none"
+
+            perceived_obstacle = next((d for d in perceived if d.get("id") == "obstacle_0"), None)
+
+            step_info[i] = {
+                "perceived": perceived,
+                "perceived_obstacle": perceived_obstacle,
+                "event": event,
+                "error_type": error_type,
+                "unnecessary_avoidance": unnecessary_avoidance,
+                "missed_response": missed_response,
+            }
 
         ox, oy, orad = self.obstacle
         for i in range(self.num_uavs):
@@ -261,6 +324,23 @@ class Simulation:
                     self.near_miss_count += 1
                 formation_dists.append(d_uav)
 
+        # Distance/identity of the single closest entity (obstacle or other
+        # UAV) to each UAV, at the post-move positions. Read-only pass, kept
+        # separate from the counting loop above so collision/near-miss totals
+        # are unaffected.
+        nearest_info = [None] * self.num_uavs
+        for i in range(self.num_uavs):
+            nearest_type = "obstacle"
+            nearest_dist = dist(new_pos[i], (ox, oy)) - orad
+            for j in range(self.num_uavs):
+                if j == i:
+                    continue
+                d_uav = dist(new_pos[i], new_pos[j])
+                if d_uav < nearest_dist:
+                    nearest_dist = d_uav
+                    nearest_type = f"uav_{j}"
+            nearest_info[i] = (nearest_type, nearest_dist)
+
         if formation_dists:
             rmse = math.sqrt(sum((fd - self.formation_spacing) ** 2 for fd in formation_dists) / len(formation_dists))
             self.formation_error_samples.append(rmse)
@@ -270,8 +350,18 @@ class Simulation:
             if not self.reached_goal[i] and dist(self.pos[i], self.targets[i]) <= self.goal_tolerance:
                 self.reached_goal[i] = True
 
-    def _log_row(self, t, i, event, perceived=None):
-        perceived = perceived or []
+        mission_completed = bool(all(self.reached_goal) and self.collision_count == 0)
+
+        for i in range(self.num_uavs):
+            self.log_rows.append(self._log_row(t, i, step_info[i], nearest_info[i], mission_completed))
+
+    def _log_row(self, t, i, info, nearest, mission_completed):
+        perceived = info["perceived"]
+        perceived_obstacle = info["perceived_obstacle"]
+        ox, oy, _ = self.obstacle
+        tx, ty = self.targets[i]
+        nearest_type, nearest_dist = nearest
+
         return {
             "scenario": self.scenario_name,
             "step": t,
@@ -279,11 +369,38 @@ class Simulation:
             "uav_id": i,
             "x": round(self.pos[i][0], 3),
             "y": round(self.pos[i][1], 3),
+
+            # Perceived vs. actual obstacle position (perceived is None if the
+            # obstacle wasn't detected this step, e.g. dropout/false negative/
+            # out of range; otherwise it reflects any position noise applied).
+            "actual_obstacle_x": round(ox, 3),
+            "actual_obstacle_y": round(oy, 3),
+            "perceived_obstacle_x": round(perceived_obstacle["x"], 3) if perceived_obstacle else None,
+            "perceived_obstacle_y": round(perceived_obstacle["y"], 3) if perceived_obstacle else None,
+
+            # The target/goal is assigned, not sensed, so it's always known
+            # exactly - perceived and actual coincide by construction.
+            "actual_target_x": round(tx, 3),
+            "actual_target_y": round(ty, 3),
+            "perceived_target_x": round(tx, 3),
+            "perceived_target_y": round(ty, 3),
+
+            "error_type": info["error_type"],
+            "action_taken": info["event"],
+
             "num_perceived_detections": len(perceived),
             "num_phantom_detections": sum(1 for d in perceived if d.get("is_phantom")),
             "dist_to_target": round(dist(self.pos[i], self.targets[i]), 3),
+
+            "nearest_entity_type": nearest_type,
+            "nearest_entity_distance": round(nearest_dist, 3),
+            "collision_risk_flag": bool(nearest_dist <= self.near_miss_distance),
+
+            "unnecessary_avoidance_flag": bool(info["unnecessary_avoidance"]),
+            "missed_response_flag": bool(info["missed_response"]),
+
             "reached_goal": self.reached_goal[i],
-            "event": event,
+            "mission_completed_flag": mission_completed,
         }
 
     def run(self):
