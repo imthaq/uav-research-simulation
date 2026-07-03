@@ -13,8 +13,6 @@ simulation\\\_prototype/
   run\\\_experiments.py         - runs every scenario for N repeated trials, saves per-run CSVs
   metrics\\\_analysis.py        - aggregates runs into results\\\_summary.csv, prints summary stats
   generate\\\_plots.py          - builds PNG charts from results\\\_summary.csv
-  simulation\\\_log.csv         - combined per-step log (run 1 of every scenario)
-  results\\\_summary.csv        - aggregated per-run metrics (root-level copy)
   initial\\\_results\\\_summary.md - narrative summary of findings
   logs/                      - one CSV per scenario per run, e.g. baseline\\\_run1.csv
   results/                   - results\\\_summary.csv (canonical aggregated output)
