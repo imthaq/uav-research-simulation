@@ -1,5 +1,4 @@
-# Summary of Perception Uncertainty and Sensor Fusion
-#      in UAV Swarms Papers
+# Summary of Perception Uncertainty and Sensor Fusion in UAV Swarms
 
 ## 1: Camera-Radar Fusion with Radar Channel Extension and Dual-CBAM-FPN for Object Detection
 
