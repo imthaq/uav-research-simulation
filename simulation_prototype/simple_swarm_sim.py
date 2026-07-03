@@ -55,10 +55,13 @@ class Perception:
         # confidence_error_level corrupts the *reported* confidence away from
         # the true value, i.e. the sensor's self-assessment of its own
         # reliability is itself unreliable.
+        true_conf = round(base, 3)
         err = self.p.get("confidence_error_level", 0.0)
+        reported = base
         if err > 0:
-            base += self.rng.gauss(0, err)
-        return round(clamp(base, 0.0, 1.0), 3)
+            reported += self.rng.gauss(0, err)
+        reported = round(clamp(reported, 0.0, 1.0), 3)
+        return reported, true_conf
 
     def _apply_noise(self, d, uav_pos):
         """Jitters a detection's perceived position (and re-derives distance)
@@ -122,7 +125,9 @@ class Perception:
             self.last_false_positive = True
 
         for d in perceived:
-            d["confidence"] = self._confidence_for(d["distance"], d.get("is_phantom", False), noise_on)
+            reported_conf, true_conf = self._confidence_for(d["distance"], d.get("is_phantom", False), noise_on)
+            d["confidence"] = reported_conf
+            d["true_confidence"] = true_conf
 
         return perceived
 
@@ -244,6 +249,7 @@ class Simulation:
         self._threat_first_true_step = {}
         self._threat_first_perceived_step = {}
         self.formation_error_samples = []
+        self.confidence_error_samples = []
         self.log_rows = []
 
     def _true_detections_for(self, i):
@@ -357,6 +363,9 @@ class Simulation:
             true_dets = self._true_detections_for(i)
             true_dets_all[i] = true_dets
             raw_percepts[i] = self.perception[i].process(true_dets, tuple(self.pos[i]))
+            for d in raw_percepts[i]:
+                if "true_confidence" in d:
+                    self.confidence_error_samples.append(abs(d["confidence"] - d["true_confidence"]))
 
         # --- Phase 2: cross-UAV sensor fusion of the obstacle detection ---
         self._apply_fusion(raw_percepts)
@@ -567,6 +576,8 @@ class Simulation:
         avg_response_time = sum(response_times) / len(response_times) if response_times else None
         avg_formation_error = (sum(self.formation_error_samples) / len(self.formation_error_samples)
                                 if self.formation_error_samples else None)
+        avg_confidence_error = (sum(self.confidence_error_samples) / len(self.confidence_error_samples)
+                                 if self.confidence_error_samples else None)
         return {
             "scenario": self.scenario_name,
             "fusion_mode": self.fusion_mode,
@@ -582,6 +593,7 @@ class Simulation:
             "fusion_recovery_count": self.fusion_recovery_count,
             "avg_response_time_s": round(avg_response_time, 3) if avg_response_time is not None else None,
             "avg_formation_error": round(avg_formation_error, 3) if avg_formation_error is not None else None,
+            "avg_confidence_error": round(avg_confidence_error, 3) if avg_confidence_error is not None else None,
         }
 
 

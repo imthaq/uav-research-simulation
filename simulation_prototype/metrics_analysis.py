@@ -48,6 +48,7 @@ def run_once(config, scenario_name, seed):
         "mission_success": metrics["mission_success"],
         "avg_response_time_s": metrics["avg_response_time_s"],
         "avg_formation_error": metrics["avg_formation_error"],
+        "avg_confidence_error": metrics["avg_confidence_error"],
     }
 
 
@@ -143,13 +144,16 @@ def main():
         avg_response = statistics.mean(response_times) if response_times else None
         formation_errors = [m["avg_formation_error"] for m in run_metrics_list if m["avg_formation_error"] is not None]
         avg_formation = statistics.mean(formation_errors) if formation_errors else None
+        confidence_errors = [m["avg_confidence_error"] for m in run_metrics_list if m["avg_confidence_error"] is not None]
+        avg_confidence = statistics.mean(confidence_errors) if confidence_errors else None
 
         print(f"[{scenario_name}] runs={n}  mission_success_rate={success_rate:.0%} \n"
               f"avg_collision_risk_count={avg_collision_risk:.1f}  avg_near_misses={avg_near_misses:.1f}  \n"
               f"avg_unnecessary_avoidance={avg_unnecessary:.1f}  avg_missed_response={avg_missed:.1f}  \n"
               f"avg_fusion_recovery={avg_fusion_recovery:.1f}  \n"
               f"avg_response_time_s={('%.3f' % avg_response) if avg_response is not None else 'N/A'}  \n"
-              f"avg_formation_error={('%.3f' % avg_formation) if avg_formation is not None else 'N/A'}\n")
+              f"avg_formation_error={('%.3f' % avg_formation) if avg_formation is not None else 'N/A'}  \n"
+              f"avg_confidence_error={('%.3f' % avg_confidence) if avg_confidence is not None else 'N/A'}\n")
 
 
 if __name__ == "__main__":
