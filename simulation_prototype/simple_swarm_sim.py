@@ -16,8 +16,13 @@ def normalize(vx, vy):
     return vx / m, vy / m
 
 
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
 class Perception:
-    """Corrupts ground-truth detections into what a UAV actually perceives."""
+    """Corrupts ground-truth detections into what a UAV actually perceives,
+    and attaches a (possibly miscalibrated) confidence value to each one."""
 
     def __init__(self, params, rng, sensor_range):
         self.p = params
@@ -32,6 +37,28 @@ class Perception:
         self.last_false_positive = False
         self.last_missed_ids = []
         self.last_noise_applied = False
+
+    def _confidence_for(self, distance, is_phantom, noisy):
+        """True (pre-miscalibration) confidence a sensor would report for a
+        detection: higher for close, clean detections; a flat, moderately
+        high value for phantoms (a false detection typically still LOOKS
+        clean to the sensor that produced it - that's what makes phantom
+        detections dangerous to trust)."""
+        if is_phantom:
+            base = 0.6
+        else:
+            base = 1.0 - (distance / self.sensor_range) * 0.6
+            if noisy:
+                base *= 0.8
+        base = clamp(base, 0.05, 1.0)
+
+        # confidence_error_level corrupts the *reported* confidence away from
+        # the true value, i.e. the sensor's self-assessment of its own
+        # reliability is itself unreliable.
+        err = self.p.get("confidence_error_level", 0.0)
+        if err > 0:
+            base += self.rng.gauss(0, err)
+        return round(clamp(base, 0.0, 1.0), 3)
 
     def _apply_noise(self, d, uav_pos):
         """Jitters a detection's perceived position (and re-derives distance)
@@ -83,7 +110,8 @@ class Perception:
             else:
                 self.last_missed_ids.append(d["id"])
 
-        if self.p.get("position_noise_std", 0.0) > 0:
+        noise_on = self.p.get("position_noise_std", 0.0) > 0
+        if noise_on:
             perceived = [self._apply_noise(d, uav_pos) for d in perceived]
             if perceived:
                 self.last_noise_applied = True
@@ -93,7 +121,49 @@ class Perception:
             perceived.append(phantom)
             self.last_false_positive = True
 
+        for d in perceived:
+            d["confidence"] = self._confidence_for(d["distance"], d.get("is_phantom", False), noise_on)
+
         return perceived
+
+
+def fuse_obstacle_detections(contributions, fusion_mode):
+    """Combines each UAV's own perceived obstacle detection (if any) into a
+    single shared belief about where the obstacle actually is.
+
+    contributions: list of (uav_id, x, y, confidence) tuples - one per UAV
+    that currently perceives the obstacle (real detection, not a phantom).
+
+    Returns None if fusion doesn't apply or nothing to fuse, else a dict
+    with the fused x/y/confidence and the list of contributing UAV ids.
+    """
+    if fusion_mode == "no_fusion" or not contributions:
+        return None
+
+    if fusion_mode == "trust_weighted_fusion":
+        total_w = sum(c[3] for c in contributions)
+        if total_w <= 1e-9:
+            fx = sum(c[1] for c in contributions) / len(contributions)
+            fy = sum(c[2] for c in contributions) / len(contributions)
+        else:
+            fx = sum(c[1] * c[3] for c in contributions) / total_w
+            fy = sum(c[2] * c[3] for c in contributions) / total_w
+    else:  # naive_fusion: unweighted average, ignores confidence entirely
+        n = len(contributions)
+        fx = sum(c[1] for c in contributions) / n
+        fy = sum(c[2] for c in contributions) / n
+
+    # More independent UAVs agreeing raises fused confidence a bit
+    # (mirrors how corroborating sources reduce uncertainty), capped at 1.0.
+    avg_conf = sum(c[3] for c in contributions) / len(contributions)
+    fused_conf = clamp(avg_conf + 0.08 * (len(contributions) - 1), 0.0, 1.0)
+
+    return {
+        "x": fx,
+        "y": fy,
+        "confidence": round(fused_conf, 3),
+        "contributors": [c[0] for c in contributions],
+    }
 
 
 class Simulation:
@@ -112,6 +182,7 @@ class Simulation:
         self.pos = [list(p) for p in s["start_positions"][: self.num_uavs]]
         self.speed = s["uav_speed"]
         self.formation_spacing = s["desired_formation_spacing"]
+        self.safety_distance = s.get("safety_distance", 2.0)
 
         self.dt = config["sim"]["dt"]
         self.max_steps = config["sim"]["max_steps"]
@@ -150,6 +221,14 @@ class Simulation:
                             for _ in range(self.num_uavs)]
         self.reached_goal = [False] * self.num_uavs
 
+        # Sensor fusion: "no_fusion" (each UAV uses only its own perception),
+        # "naive_fusion" (unweighted average of every UAV's obstacle detection
+        # this step), or "trust_weighted_fusion" (same, weighted by each
+        # detection's confidence). Fusion only combines *real* obstacle
+        # detections across UAVs; phantom (false-positive) detections are
+        # never fused since each is a distinct, uncorroborated ghost.
+        self.fusion_mode = self.scn.get("fusion_mode", "no_fusion")
+
         # Latency: detections are generated each step but only become available
         # to the controller `latency_steps` steps later. Each buffer holds
         # (generation_step, perceived_list) entries awaiting delivery.
@@ -161,6 +240,7 @@ class Simulation:
         self.unnecessary_avoidance_count = 0
         self.missed_response_count = 0
         self.avoidance_action_count = 0
+        self.fusion_recovery_count = 0  # steps where fusion supplied an obstacle detection a UAV had individually missed
         self._threat_first_true_step = {}
         self._threat_first_perceived_step = {}
         self.formation_error_samples = []
@@ -181,6 +261,44 @@ class Simulation:
                 dets.append({"kind": "uav", "id": f"uav_{j}", "x": self.pos[j][0],
                              "y": self.pos[j][1], "distance": d_uav})
         return dets
+
+    def _apply_fusion(self, raw_percepts):
+        """Cross-UAV fusion step. Given each UAV's individually-perceived
+        detection list (already corrupted by its own Perception), builds a
+        fused obstacle estimate from every UAV that currently has a real
+        (non-phantom) obstacle detection, then - if fusion is enabled -
+        overwrites/injects that fused estimate into every UAV's own
+        perceived list (recomputing distance/confidence per UAV). This is
+        how fusion can "recover" a detection an individual UAV's sensor
+        missed via false_negative/dropout, as long as at least one other
+        UAV still saw it."""
+        contributions = []
+        for i, dets in raw_percepts.items():
+            for d in dets:
+                if d.get("id") == "obstacle_0":
+                    contributions.append((i, d["x"], d["y"], d.get("confidence", 0.5)))
+
+        fused = fuse_obstacle_detections(contributions, self.fusion_mode)
+        if fused is None:
+            return
+
+        ox, oy, orad = self.obstacle
+        for i, dets in raw_percepts.items():
+            had_own = any(d.get("id") == "obstacle_0" for d in dets)
+            fx, fy = fused["x"], fused["y"]
+            d_fused = max(dist(self.pos[i], (fx, fy)) - orad, 0.0)
+            if d_fused > self.sensor_range:
+                # Fused estimate is only usable if it's within this UAV's own
+                # sensing range - fusion shares detections, not omniscience.
+                continue
+            if not had_own:
+                self.fusion_recovery_count += 1
+            fused_det = {
+                "kind": "obstacle", "id": "obstacle_0", "x": fx, "y": fy,
+                "distance": d_fused, "confidence": fused["confidence"],
+                "is_fused": True, "fusion_contributors": len(fused["contributors"]),
+            }
+            dets[:] = [d for d in dets if d.get("id") != "obstacle_0"] + [fused_det]
 
     def _steer(self, i, perceived):
         tgt = self.targets[i]
@@ -231,6 +349,19 @@ class Simulation:
         formation_dists = []
         step_info = [None] * self.num_uavs  # per-UAV data needed for logging, filled in below
 
+        # --- Phase 1: each active UAV's own (uncorrupted-by-fusion) perception ---
+        active = [i for i in range(self.num_uavs) if not self.reached_goal[i]]
+        true_dets_all = {}
+        raw_percepts = {}
+        for i in active:
+            true_dets = self._true_detections_for(i)
+            true_dets_all[i] = true_dets
+            raw_percepts[i] = self.perception[i].process(true_dets, tuple(self.pos[i]))
+
+        # --- Phase 2: cross-UAV sensor fusion of the obstacle detection ---
+        self._apply_fusion(raw_percepts)
+
+        # --- Phase 3: latency buffering, steering, logging ---
         for i in range(self.num_uavs):
             if self.reached_goal[i]:
                 step_info[i] = {
@@ -243,11 +374,11 @@ class Simulation:
                 }
                 continue
 
-            true_dets = self._true_detections_for(i)
-            raw_perceived = self.perception[i].process(true_dets, tuple(self.pos[i]))
+            true_dets = true_dets_all[i]
+            raw_perceived = raw_percepts[i]
 
-            # Sensor output is generated now but only "arrives" at the controller
-            # after latency_steps (0 latency behaves exactly as before).
+            # Sensor (post-fusion) output is generated now but only "arrives"
+            # at the controller after latency_steps (0 latency = instant, as before).
             self.detection_buffer[i].append((t, raw_perceived))
             perceived = self._get_delayed_perception(i, t)
 
@@ -296,6 +427,8 @@ class Simulation:
                 errors.append("position_noise")
             if self.latency_steps > 0:
                 errors.append("latency")
+            if self.scn.get("confidence_error_level", 0.0) > 0:
+                errors.append("confidence_error")
             error_type = "+".join(errors) if errors else "none"
 
             perceived_obstacle = next((d for d in perceived if d.get("id") == "obstacle_0"), None)
@@ -324,21 +457,30 @@ class Simulation:
                     self.near_miss_count += 1
                 formation_dists.append(d_uav)
 
-        # Distance/identity of the single closest entity (obstacle or other
-        # UAV) to each UAV, at the post-move positions. Read-only pass, kept
-        # separate from the counting loop above so collision/near-miss totals
-        # are unaffected.
+        # Per-UAV distance to the nearest *other UAV* and distance to the
+        # obstacle (surface distance), at the post-move positions - kept as
+        # a read-only pass, separate from the counting loop above so
+        # collision/near-miss totals are unaffected.
+        nearest_uav_info = [None] * self.num_uavs
+        obstacle_dist_info = [None] * self.num_uavs
         nearest_info = [None] * self.num_uavs
         for i in range(self.num_uavs):
+            d_obs_i = dist(new_pos[i], (ox, oy)) - orad
+            obstacle_dist_info[i] = max(d_obs_i, 0.0)
+
             nearest_type = "obstacle"
-            nearest_dist = dist(new_pos[i], (ox, oy)) - orad
+            nearest_dist = d_obs_i
+            nearest_uav_dist = None
             for j in range(self.num_uavs):
                 if j == i:
                     continue
                 d_uav = dist(new_pos[i], new_pos[j])
+                if nearest_uav_dist is None or d_uav < nearest_uav_dist:
+                    nearest_uav_dist = d_uav
                 if d_uav < nearest_dist:
                     nearest_dist = d_uav
                     nearest_type = f"uav_{j}"
+            nearest_uav_info[i] = nearest_uav_dist
             nearest_info[i] = (nearest_type, nearest_dist)
 
         if formation_dists:
@@ -353,9 +495,12 @@ class Simulation:
         mission_completed = bool(all(self.reached_goal) and self.collision_count == 0)
 
         for i in range(self.num_uavs):
-            self.log_rows.append(self._log_row(t, i, step_info[i], nearest_info[i], mission_completed))
+            self.log_rows.append(self._log_row(
+                t, i, step_info[i], nearest_info[i], nearest_uav_info[i],
+                obstacle_dist_info[i], mission_completed,
+            ))
 
-    def _log_row(self, t, i, info, nearest, mission_completed):
+    def _log_row(self, t, i, info, nearest, nearest_uav_dist, obstacle_dist, mission_completed):
         perceived = info["perceived"]
         perceived_obstacle = info["perceived_obstacle"]
         ox, oy, _ = self.obstacle
@@ -367,40 +512,41 @@ class Simulation:
             "step": t,
             "time_s": round(t * self.dt, 3),
             "uav_id": i,
-            "x": round(self.pos[i][0], 3),
-            "y": round(self.pos[i][1], 3),
+            "uav_pos_x": round(self.pos[i][0], 3),
+            "uav_pos_y": round(self.pos[i][1], 3),
+
+            # Goal position (assigned per-UAV, not sensed - always known exactly).
+            "goal_pos_x": round(tx, 3),
+            "goal_pos_y": round(ty, 3),
 
             # Perceived vs. actual obstacle position (perceived is None if the
             # obstacle wasn't detected this step, e.g. dropout/false negative/
-            # out of range; otherwise it reflects any position noise applied).
+            # out of range; otherwise it reflects any noise applied and/or fusion).
             "actual_obstacle_x": round(ox, 3),
             "actual_obstacle_y": round(oy, 3),
             "perceived_obstacle_x": round(perceived_obstacle["x"], 3) if perceived_obstacle else None,
             "perceived_obstacle_y": round(perceived_obstacle["y"], 3) if perceived_obstacle else None,
 
-            # The target/goal is assigned, not sensed, so it's always known
-            # exactly - perceived and actual coincide by construction.
-            "actual_target_x": round(tx, 3),
-            "actual_target_y": round(ty, 3),
-            "perceived_target_x": round(tx, 3),
-            "perceived_target_y": round(ty, 3),
-
-            "error_type": info["error_type"],
+            "perception_error_type": info["error_type"],
+            "confidence_value": perceived_obstacle["confidence"] if perceived_obstacle else None,
+            "fusion_mode": self.fusion_mode,
             "action_taken": info["event"],
 
             "num_perceived_detections": len(perceived),
             "num_phantom_detections": sum(1 for d in perceived if d.get("is_phantom")),
-            "dist_to_target": round(dist(self.pos[i], self.targets[i]), 3),
+            "dist_to_goal": round(dist(self.pos[i], self.targets[i]), 3),
 
+            "distance_to_nearest_uav": round(nearest_uav_dist, 3) if nearest_uav_dist is not None else None,
+            "distance_to_obstacle": round(obstacle_dist, 3),
             "nearest_entity_type": nearest_type,
             "nearest_entity_distance": round(nearest_dist, 3),
-            "collision_risk_flag": bool(nearest_dist <= self.near_miss_distance),
 
+            "collision_risk_flag": bool(nearest_dist <= self.near_miss_distance),
             "unnecessary_avoidance_flag": bool(info["unnecessary_avoidance"]),
             "missed_response_flag": bool(info["missed_response"]),
+            "mission_completed_flag": mission_completed,
 
             "reached_goal": self.reached_goal[i],
-            "mission_completed_flag": mission_completed,
         }
 
     def run(self):
@@ -423,6 +569,7 @@ class Simulation:
                                 if self.formation_error_samples else None)
         return {
             "scenario": self.scenario_name,
+            "fusion_mode": self.fusion_mode,
             "steps_run": final_step + 1,
             "uavs_reached_goal": num_reached,
             "num_uavs": self.num_uavs,
@@ -432,6 +579,7 @@ class Simulation:
             "unnecessary_avoidance_count": self.unnecessary_avoidance_count,
             "missed_response_count": self.missed_response_count,
             "avoidance_action_count": self.avoidance_action_count,
+            "fusion_recovery_count": self.fusion_recovery_count,
             "avg_response_time_s": round(avg_response_time, 3) if avg_response_time is not None else None,
             "avg_formation_error": round(avg_formation_error, 3) if avg_formation_error is not None else None,
         }

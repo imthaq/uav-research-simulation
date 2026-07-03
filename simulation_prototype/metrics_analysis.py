@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import copy
 import csv
 import json
@@ -9,14 +9,17 @@ from simple_swarm_sim import Simulation
 
 
 def scenario_params(scn):
-    """Pulls out the perception-error parameters for a scenario, using the
-    same defaults Perception.process() falls back on when a key is absent."""
+    """Pulls out the perception-error / fusion parameters for a scenario,
+    using the same defaults Perception/Simulation fall back on when a key
+    is absent."""
     return {
         "false_positive_rate": scn.get("false_positive_rate", 0.0),
         "false_negative_rate": scn.get("false_negative_rate", 0.0),
         "noise_level": scn.get("position_noise_std", 0.0),
         "latency_steps": scn.get("latency_steps", 0),
         "dropout_probability": scn.get("dropout_prob", 0.0),
+        "confidence_error_level": scn.get("confidence_error_level", 0.0),
+        "fusion_mode": scn.get("fusion_mode", "no_fusion"),
     }
 
 
@@ -41,6 +44,7 @@ def run_once(config, scenario_name, seed):
         "collision_risk_count": collision_risk_count,
         "unnecessary_avoidance_count": metrics["unnecessary_avoidance_count"],
         "missed_response_count": metrics["missed_response_count"],
+        "fusion_recovery_count": metrics["fusion_recovery_count"],
         "mission_success": metrics["mission_success"],
         "avg_response_time_s": metrics["avg_response_time_s"],
         "avg_formation_error": metrics["avg_formation_error"],
@@ -52,7 +56,7 @@ def main():
     parser.add_argument("--config", default="simulation_config.json")
     parser.add_argument("--runs", type=int, default=5, help="Number of seeded runs per scenario")
     parser.add_argument("--scenario", default=None, help="Only analyze this one scenario")
-    parser.add_argument("--output", default="logs/results_summary.csv")
+    parser.add_argument("--output", default="results/results_summary.csv")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -64,14 +68,17 @@ def main():
     fieldnames = [
         "scenario",
         "run_number",
+        "fusion_mode",
         "false_positive_rate",
         "false_negative_rate",
         "noise_level",
         "latency_steps",
         "dropout_probability",
+        "confidence_error_level",
         "collision_risk_count",
         "unnecessary_avoidance_count",
         "missed_response_count",
+        "fusion_recovery_count",
         "mission_success",
         "avg_response_time_s",
         # bonus columns covering the remaining requested "calculate" metrics
@@ -95,14 +102,17 @@ def main():
             rows.append({
                 "scenario": scenario_name,
                 "run_number": run_number,
+                "fusion_mode": params["fusion_mode"],
                 "false_positive_rate": params["false_positive_rate"],
                 "false_negative_rate": params["false_negative_rate"],
                 "noise_level": params["noise_level"],
                 "latency_steps": params["latency_steps"],
                 "dropout_probability": params["dropout_probability"],
+                "confidence_error_level": params["confidence_error_level"],
                 "collision_risk_count": m["collision_risk_count"],
                 "unnecessary_avoidance_count": m["unnecessary_avoidance_count"],
                 "missed_response_count": m["missed_response_count"],
+                "fusion_recovery_count": m["fusion_recovery_count"],
                 "mission_success": "Yes" if m["mission_success"] else "No",
                 "avg_response_time_s": m["avg_response_time_s"],
                 "total_near_misses": m["total_near_misses"],
@@ -111,7 +121,12 @@ def main():
 
         scenario_runs[scenario_name] = run_metrics_list
 
-    with open(args.output, "w", newline="") as f:
+    import os
+    out_path = args.output
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
@@ -123,6 +138,7 @@ def main():
         avg_near_misses = statistics.mean(m["total_near_misses"] for m in run_metrics_list)
         avg_unnecessary = statistics.mean(m["unnecessary_avoidance_count"] for m in run_metrics_list)
         avg_missed = statistics.mean(m["missed_response_count"] for m in run_metrics_list)
+        avg_fusion_recovery = statistics.mean(m["fusion_recovery_count"] for m in run_metrics_list)
         response_times = [m["avg_response_time_s"] for m in run_metrics_list if m["avg_response_time_s"] is not None]
         avg_response = statistics.mean(response_times) if response_times else None
         formation_errors = [m["avg_formation_error"] for m in run_metrics_list if m["avg_formation_error"] is not None]
@@ -131,6 +147,7 @@ def main():
         print(f"[{scenario_name}] runs={n}  mission_success_rate={success_rate:.0%} \n"
               f"avg_collision_risk_count={avg_collision_risk:.1f}  avg_near_misses={avg_near_misses:.1f}  \n"
               f"avg_unnecessary_avoidance={avg_unnecessary:.1f}  avg_missed_response={avg_missed:.1f}  \n"
+              f"avg_fusion_recovery={avg_fusion_recovery:.1f}  \n"
               f"avg_response_time_s={('%.3f' % avg_response) if avg_response is not None else 'N/A'}  \n"
               f"avg_formation_error={('%.3f' % avg_formation) if avg_formation is not None else 'N/A'}\n")
 

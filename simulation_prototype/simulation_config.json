@@ -15,22 +15,10 @@
   "swarm": {
     "num_uavs": 4,
     "start_positions": [
-      [
-        5.0,
-        5.0
-      ],
-      [
-        5.0,
-        15.0
-      ],
-      [
-        15.0,
-        5.0
-      ],
-      [
-        15.0,
-        15.0
-      ]
+      [5.0, 5.0],
+      [5.0, 15.0],
+      [15.0, 5.0],
+      [15.0, 15.0]
     ],
     "uav_speed": 2.0,
     "desired_formation_spacing": 8.0,
@@ -59,36 +47,75 @@
     "position_noise_std": 0.0,
     "latency_steps": 0,
     "dropout_prob": 0.0,
-    "dropout_duration_steps": 8
+    "dropout_duration_steps": 8,
+    "confidence_error_level": 0.0,
+    "fusion_mode": "no_fusion"
   },
   "scenarios": {
     "baseline": {
+      "description": "No perception error, no fusion. Reference case every other scenario is compared against.",
       "false_positive_rate": 0.0,
-      "false_negative_rate": 0.0
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "fusion_mode": "no_fusion"
     },
     "false_positive": {
+      "description": "Phantom (ghost) detections only.",
       "false_positive_rate": 0.08,
-      "false_negative_rate": 0.0
+      "false_negative_rate": 0.0,
+      "fusion_mode": "no_fusion"
     },
     "false_negative": {
+      "description": "Missed detections only.",
       "false_positive_rate": 0.0,
-      "false_negative_rate": 0.25
+      "false_negative_rate": 0.25,
+      "fusion_mode": "no_fusion"
     },
     "sensor_noise": {
+      "description": "Gaussian position noise on real detections only.",
       "false_positive_rate": 0.0,
       "false_negative_rate": 0.0,
-      "position_noise_std": 1.5
+      "position_noise_std": 1.5,
+      "fusion_mode": "no_fusion"
     },
     "latency": {
+      "description": "Detections delayed before reaching the controller.",
       "false_positive_rate": 0.0,
       "false_negative_rate": 0.0,
-      "latency_steps": 5
+      "latency_steps": 5,
+      "fusion_mode": "no_fusion"
     },
     "sensor_dropout": {
+      "description": "Periodic total sensor blackouts.",
       "false_positive_rate": 0.0,
       "false_negative_rate": 0.0,
       "dropout_prob": 0.02,
-      "dropout_duration_steps": 8
+      "dropout_duration_steps": 8,
+      "fusion_mode": "no_fusion"
+    },
+    "confidence_error": {
+      "description": "Reported detection confidence is miscalibrated (noisy) relative to true detection quality, with no fusion to compensate.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "confidence_error_level": 0.35,
+      "fusion_mode": "no_fusion"
+    },
+    "naive_fusion": {
+      "description": "Moderate noise + missed detections, combined across UAVs with unweighted (naive) averaging fusion.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "naive_fusion"
+    },
+    "trust_weighted_fusion": {
+      "description": "Same error conditions as naive_fusion, but fused using each UAV's confidence as a trust weight.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion"
     }
   }
 }

@@ -1,7 +1,7 @@
 """
-Task 8: Generate basic graphs from logs/results_summary.csv.
+Generate basic graphs from results/results_summary.csv.
 
-Reads the per-run metrics produced by metrics_analysis.py and saves five
+Reads the per-run metrics produced by metrics_analysis.py and saves six
 PNG charts into plots/:
 
   1. false_positive_vs_unnecessary_avoidance.png
@@ -9,12 +9,13 @@ PNG charts into plots/:
   3. latency_vs_response_time.png
   4. dropout_vs_mission_success.png
   5. baseline_vs_error_scenarios.png
+  6. fusion_mode_vs_safety_metrics.png
 
 Run from the simulation_prototype/ folder:
     python generate_plots.py
 Optional flags:
-    --summary logs/results_summary.csv   (input file)
-    --outdir  plots                      (output folder)
+    --summary results/results_summary.csv   (input file)
+    --outdir  plots                         (output folder)
 """
 
 import argparse
@@ -29,6 +30,7 @@ import pandas as pd
 SCENARIO_ORDER = [
     "baseline", "false_positive", "false_negative",
     "sensor_noise", "latency", "sensor_dropout",
+    "confidence_error", "naive_fusion", "trust_weighted_fusion",
 ]
 COLORS = {
     "baseline": "#4B5694",
@@ -37,6 +39,9 @@ COLORS = {
     "sensor_noise": "#7288AE",
     "latency": "#6E9075",
     "sensor_dropout": "#8B5FA8",
+    "confidence_error": "#B08968",
+    "naive_fusion": "#5FA88B",
+    "trust_weighted_fusion": "#111844",
 }
 
 
@@ -137,9 +142,44 @@ def baseline_vs_all(df, out_path):
     plt.close(fig)
 
 
+def fusion_mode_comparison(df, out_path):
+    """Compares no_fusion (confidence_error, same error profile family) vs
+    naive_fusion vs trust_weighted_fusion on the two safety metrics fusion is
+    meant to help with: missed responses (recovered via corroboration) and
+    collision risk."""
+    fusion_scenarios = ["confidence_error", "naive_fusion", "trust_weighted_fusion"]
+    labels = ["no_fusion\n(confidence_error)", "naive_fusion", "trust_weighted_fusion"]
+    present = [s for s in fusion_scenarios if s in df["scenario"].unique()]
+    if not present:
+        return
+    agg = df[df["scenario"].isin(present)].groupby("scenario")[
+        ["collision_risk_count", "missed_response_count", "fusion_recovery_count"]
+    ].mean().reindex(present)
+
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
+    metrics = [
+        ("collision_risk_count", "Avg collision risk count"),
+        ("missed_response_count", "Avg missed response count"),
+        ("fusion_recovery_count", "Avg fusion-recovered detections"),
+    ]
+    for ax, (col, label) in zip(axes, metrics):
+        bars = ax.bar(range(len(present)), agg[col], color=[COLORS.get(s, "#7288AE") for s in present])
+        ax.set_xticks(range(len(present)))
+        ax.set_xticklabels([labels[fusion_scenarios.index(s)] for s in present], fontsize=8)
+        ax.set_title(label, fontsize=10, fontweight="bold")
+        ax.set_ylabel("count")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig.suptitle("Fusion Mode Comparison - Average Across Runs", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate Task 8 graphs from results_summary.csv")
-    parser.add_argument("--summary", default="logs/results_summary.csv")
+    parser = argparse.ArgumentParser(description="Generate graphs from results_summary.csv")
+    parser.add_argument("--summary", default="results/results_summary.csv")
     parser.add_argument("--outdir", default="plots")
     args = parser.parse_args()
 
@@ -175,7 +215,9 @@ def main():
 
     baseline_vs_all(df, os.path.join(args.outdir, "baseline_vs_error_scenarios.png"))
 
-    print(f"Saved 5 graphs to {args.outdir}/")
+    fusion_mode_comparison(df, os.path.join(args.outdir, "fusion_mode_vs_safety_metrics.png"))
+
+    print(f"Saved 6 graphs to {args.outdir}/")
 
 
 if __name__ == "__main__":
