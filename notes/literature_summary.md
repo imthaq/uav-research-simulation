@@ -1,4 +1,3 @@
-Correct the format for .md file 
 # Summary of Perception Uncertainty and Sensor Fusion
 #      in UAV Swarms Papers
 
