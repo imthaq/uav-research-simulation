@@ -198,6 +198,19 @@ class Simulation:
         self.near_miss_distance = se["near_miss_distance"]
         self.goal_tolerance = se["goal_tolerance"]
 
+        # Range at which another UAV (not the obstacle) starts contributing a
+        # repulsive steering force. This used to be self.sensor_range, i.e.
+        # any teammate detected anywhere within the full sensor footprint
+        # (up to 15 units away) pushed back - which meant UAVs converging on
+        # goal slots only ~5-8 units apart (see slot_radius below) permanently
+        # repelled each other and could never settle, even with zero
+        # perception error. Reactive avoidance should only kick in once a
+        # teammate is actually close enough to be a safety concern, so this
+        # is tied to near_miss_distance/safety_distance instead. This also
+        # gives self.safety_distance (previously read from config and never
+        # referenced again) an actual effect on behavior.
+        self.uav_avoidance_range = max(self.near_miss_distance, self.safety_distance * 1.5)
+
         # Each UAV gets its own goal slot arranged around the shared target
         # point instead of all UAVs steering toward one identical coordinate.
         # Converging on a single point causes permanent crowding/orbiting once
@@ -262,10 +275,11 @@ class Simulation:
         for j in range(self.num_uavs):
             if j == i:
                 continue
-            d_uav = dist(self.pos[i], self.pos[j])
+            d_uav = dist(self.pos[i], (self.pos[j]))
             if d_uav <= self.sensor_range:
                 dets.append({"kind": "uav", "id": f"uav_{j}", "x": self.pos[j][0],
-                             "y": self.pos[j][1], "distance": d_uav})
+                             "y": self.pos[j][1], "distance": d_uav,
+                             "is_parked": self.reached_goal[j]})
         return dets
 
     def _apply_fusion(self, raw_percepts):
@@ -312,12 +326,17 @@ class Simulation:
         vx, vy = gx * self.goal_gain, gy * self.goal_gain
 
         triggered_real = False
-        phantom_only = True
+        triggered_phantom = False
 
         for d in perceived:
             rx, ry = self.pos[i][0] - d["x"], self.pos[i][1] - d["y"]
             r = max(d["distance"], 0.3)
-            if r > self.sensor_range:
+            if d.get("kind") == "uav":
+                cutoff = (self.collision_distance * 1.5 if d.get("is_parked")
+                          else self.uav_avoidance_range)
+                if r > cutoff:
+                    continue
+            elif r > self.sensor_range:
                 continue
             rx, ry = normalize(rx, ry)
             strength = self.avoidance_gain / r
@@ -325,12 +344,14 @@ class Simulation:
             tangential_strength = self.tangential_gain / r
             vx += rx * strength + tx * tangential_strength
             vy += ry * strength + ty * tangential_strength
-            if strength > 0.05 and not d.get("is_phantom"):
-                triggered_real = True
-                phantom_only = False
+            if strength > 0.05:
+                if d.get("is_phantom"):
+                    triggered_phantom = True
+                else:
+                    triggered_real = True
 
         vx, vy = normalize(vx, vy)
-        return vx * self.speed, vy * self.speed, len(perceived) > 0, triggered_real, phantom_only
+        return vx * self.speed, vy * self.speed, triggered_real, triggered_phantom
 
     def _get_delayed_perception(self, i, t):
         """Returns the most recent perceived-detection set that has had time
@@ -391,20 +412,31 @@ class Simulation:
             self.detection_buffer[i].append((t, raw_perceived))
             perceived = self._get_delayed_perception(i, t)
 
+            # Response time should measure how long it takes the controller to
+            # find out about something real - starting the clock the moment it
+            # first exists as a true detection (within sensor_range, per
+            # _true_detections_for), not only once it's already close enough
+            # to count as a near-miss. Gating on near_miss_distance was the
+            # bug: since detections are already picked up from sensor_range
+            # (15) onward and near_miss_distance (3.5) is much smaller, by the
+            # time a threat qualified under the old condition it had almost
+            # always already been sitting in every UAV's perceived list (even
+            # the delayed copy) for many steps, so first_perceived_step ==
+            # first_true_step and response time came out as 0.0 regardless of
+            # latency/dropout/false-negative settings.
             for d in true_dets:
-                if d["distance"] <= self.near_miss_distance:
-                    key = (i, d["id"])
-                    if key not in self._threat_first_true_step:
-                        self._threat_first_true_step[key] = t
+                key = (i, d["id"])
+                if key not in self._threat_first_true_step:
+                    self._threat_first_true_step[key] = t
             perceived_ids = {d["id"] for d in perceived if not d.get("is_phantom")}
             for pid in perceived_ids:
                 key = (i, pid)
                 if key in self._threat_first_true_step and key not in self._threat_first_perceived_step:
                     self._threat_first_perceived_step[key] = t
 
-            vx, vy, any_det, triggered_real, phantom_only = self._steer(i, perceived)
+            vx, vy, triggered_real, triggered_phantom = self._steer(i, perceived)
 
-            unnecessary_avoidance = any_det and phantom_only
+            unnecessary_avoidance = triggered_phantom and not triggered_real
             if unnecessary_avoidance:
                 self.unnecessary_avoidance_count += 1
             if triggered_real:
@@ -419,7 +451,7 @@ class Simulation:
             new_pos[i][0] = min(max(new_pos[i][0] + vx * self.dt, 0.0), self.cfg["world"]["width"])
             new_pos[i][1] = min(max(new_pos[i][1] + vy * self.dt, 0.0), self.cfg["world"]["height"])
 
-            event = "avoidance" if triggered_real else ("false_avoidance" if any_det and phantom_only else "move")
+            event = "avoidance" if triggered_real else ("false_avoidance" if triggered_phantom else "move")
 
             # Which perception-error mechanism(s) fired for this UAV this step
             # (based on the freshly generated sensor reading, not the delayed

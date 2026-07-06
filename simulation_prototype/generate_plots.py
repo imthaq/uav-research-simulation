@@ -30,7 +30,7 @@ import pandas as pd
 SCENARIO_ORDER = [
     "baseline", "false_positive", "false_negative",
     "sensor_noise", "latency", "sensor_dropout",
-    "confidence_error", "naive_fusion", "trust_weighted_fusion",
+    "confidence_error", "no_fusion_matched", "naive_fusion", "trust_weighted_fusion",
 ]
 COLORS = {
     "baseline": "#4B5694",
@@ -40,6 +40,7 @@ COLORS = {
     "latency": "#6E9075",
     "sensor_dropout": "#8B5FA8",
     "confidence_error": "#B08968",
+    "no_fusion_matched": "#A6763D",
     "naive_fusion": "#5FA88B",
     "trust_weighted_fusion": "#111844",
 }
@@ -76,7 +77,7 @@ def per_run_bar(df, scenario, value_col, title, ylabel, out_path, baseline_df=No
                     label=f"baseline avg ({base_mean:.2f})")
 
     ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.set_xlabel("Run number")
+    ax.set_xlabel("Trial number (fixed parameter value - see title)")
     ax.set_ylabel(ylabel)
     ax.legend(frameon=False, fontsize=9)
     ax.spines["top"].set_visible(False)
@@ -96,7 +97,9 @@ def dropout_mission_success(df, out_path):
     ax.set_yticklabels(["Failed", "Succeeded"])
     ax.set_ylim(0, 1.2)
     ax.set_xlabel("Run number")
-    ax.set_title("Sensor Dropout Scenario - Mission Success per Run", fontsize=12, fontweight="bold")
+    dropout_p = sub["dropout_probability"].iloc[0] if len(sub) else "?"
+    ax.set_title(f"Mission Success at Fixed Dropout Probability = {dropout_p}\n(5 trials, not a probability sweep)",
+                 fontsize=12, fontweight="bold")
     success_rate = sub["mission_success_bool"].mean() * 100
     ax.text(0.5, 1.08, f"Success rate: {success_rate:.0f}% ({int(sub['mission_success_bool'].sum())}/{len(sub)} runs)",
             transform=ax.transAxes, ha="center", fontsize=10, color="#111844")
@@ -143,12 +146,16 @@ def baseline_vs_all(df, out_path):
 
 
 def fusion_mode_comparison(df, out_path):
-    """Compares no_fusion (confidence_error, same error profile family) vs
-    naive_fusion vs trust_weighted_fusion on the two safety metrics fusion is
-    meant to help with: missed responses (recovered via corroboration) and
-    collision risk."""
-    fusion_scenarios = ["confidence_error", "naive_fusion", "trust_weighted_fusion"]
-    labels = ["no_fusion\n(confidence_error)", "naive_fusion", "trust_weighted_fusion"]
+    """Compares no_fusion_matched vs naive_fusion vs trust_weighted_fusion on
+    the two safety metrics fusion is meant to help with: missed responses
+    (recovered via corroboration) and collision risk. All three scenarios use
+    the identical error profile (FN=0.2, noise=1.5, confidence_error=0.15) so
+    fusion mode is the only variable changing - see no_fusion_matched in
+    simulation_config.json. (confidence_error was used here previously, but
+    it runs under a different error profile entirely and made the comparison
+    invalid.)"""
+    fusion_scenarios = ["no_fusion_matched", "naive_fusion", "trust_weighted_fusion"]
+    labels = ["no_fusion", "naive_fusion", "trust_weighted_fusion"]
     present = [s for s in fusion_scenarios if s in df["scenario"].unique()]
     if not present:
         return
@@ -187,25 +194,28 @@ def main():
     df = load(args.summary)
     baseline_df = df[df["scenario"] == "baseline"]
 
+    fp_rate = df[df["scenario"] == "false_positive"]["false_positive_rate"].iloc[0]
     per_run_bar(
         df, "false_positive", "unnecessary_avoidance_count",
-        "False Positive Scenario vs Unnecessary Avoidance",
+        f"Unnecessary Avoidance at Fixed False Positive Rate = {fp_rate}\n(5 trials, not a rate sweep - see note in README)",
         "Unnecessary avoidance count",
         os.path.join(args.outdir, "false_positive_vs_unnecessary_avoidance.png"),
         baseline_df=baseline_df,
     )
 
+    fn_rate = df[df["scenario"] == "false_negative"]["false_negative_rate"].iloc[0]
     per_run_bar(
         df, "false_negative", "collision_risk_count",
-        "False Negative Scenario vs Collision Risk",
+        f"Collision Risk at Fixed False Negative Rate = {fn_rate}\n(5 trials, not a rate sweep - see note in README)",
         "Collision risk count",
         os.path.join(args.outdir, "false_negative_vs_collision_risk.png"),
         baseline_df=baseline_df,
     )
 
+    lat_steps = df[df["scenario"] == "latency"]["latency_steps"].iloc[0]
     per_run_bar(
         df, "latency", "avg_response_time_s",
-        "Latency Scenario vs Response Time",
+        f"Response Time at Fixed Latency = {lat_steps} steps\n(5 trials, not a latency sweep - see note in README)",
         "Avg response time (s)",
         os.path.join(args.outdir, "latency_vs_response_time.png"),
         baseline_df=baseline_df,
