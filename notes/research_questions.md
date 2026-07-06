@@ -17,9 +17,9 @@ Hypothesis: Some of environmental factors includes the natural UV radiations com
 
 Hypothesis: Even though LiDAR acts as  a better alternative to simple vision or radar sensor based drones. They are not encouraged due to high cost it comes with not to mention the power consumption and for it to work more efficiently ML model is to be implemented adding an addition to power consumption constraints.
 
-## 5) Why do some UAVs based drone still rely on using algorithm based solutions into their UAVs without utilizing ML model in their UAVs?
+## 5) Why do some ML UAV drones tends to perform better than the UAVs which rely solely on algorithm? Moreover by how much percent ML based UAVs tends to perform better than the algorithm based UAVs ?  
 
-Hypothesis: Algorithm based solutions are less power consumption heavy and act according to specific set of instructions provided to it and are suitable to simple daily life tasks. Whereas ML models  are more cost and power consumption heavy while also requiring a large dataset on which we have to train our model during our entire time of flight.
+Hypothesis: ML UAVs learns to recognize the patterns from its surroundings and make prediction based decision rather than acting alone on some specific set of instruction.
 
 ## 6) Why do false positive even occur ? How does it affect the performance of the UAV especially in swarm based formation scenarios ?
 
