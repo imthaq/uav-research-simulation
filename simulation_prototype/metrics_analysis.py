@@ -2,6 +2,7 @@ import argparse
 import copy
 import csv
 import json
+import os
 import statistics
 import sys
 
@@ -60,8 +61,15 @@ def main():
     parser.add_argument("--output", default="results/results_summary.csv")
     args = parser.parse_args()
 
+    if args.runs < 1:
+        sys.exit(f"--runs must be >= 1 (got {args.runs})")
+
     with open(args.config) as f:
         config = json.load(f)
+
+    if args.scenario and args.scenario not in config["scenarios"]:
+        available = ", ".join(config["scenarios"].keys())
+        sys.exit(f"Unknown scenario '{args.scenario}'. Available: {available}")
 
     scenario_names = [args.scenario] if args.scenario else list(config["scenarios"].keys())
     base_seed = config["sim"]["seed"]
@@ -85,6 +93,7 @@ def main():
         # bonus columns covering the remaining requested "calculate" metrics
         "total_near_misses",
         "avg_formation_error",
+        "avg_confidence_error",
     ]
 
     rows = []
@@ -118,11 +127,11 @@ def main():
                 "avg_response_time_s": m["avg_response_time_s"],
                 "total_near_misses": m["total_near_misses"],
                 "avg_formation_error": m["avg_formation_error"],
+                "avg_confidence_error": m["avg_confidence_error"],
             })
 
         scenario_runs[scenario_name] = run_metrics_list
 
-    import os
     out_path = args.output
     out_dir = os.path.dirname(out_path)
     if out_dir:

@@ -103,6 +103,13 @@
       "confidence_error_level": 0.35,
       "fusion_mode": "no_fusion"
     },
+    "no_fusion_matched": {
+      "description": "Same error conditions as naive_fusion/trust_weighted_fusion (FN=0.2, noise=1.5, confidence_error=0.15) but with fusion disabled. Exists so fusion mode is the only variable that changes across the three fusion-comparison scenarios; do not compare naive_fusion/trust_weighted_fusion against confidence_error or baseline for that purpose, since those use different error profiles.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "no_fusion"
+    },
     "naive_fusion": {
       "description": "Moderate noise + missed detections, combined across UAVs with unweighted (naive) averaging fusion.",
       "false_negative_rate": 0.2,
