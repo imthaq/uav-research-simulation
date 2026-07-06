@@ -176,6 +176,7 @@ class Simulation:
         self.cfg = config
         self.scenario_name = scenario_name
         self.scn = config["scenarios"][scenario_name]
+        
         self.rng = random.Random(config["sim"]["seed"])
 
         w = config["world"]
