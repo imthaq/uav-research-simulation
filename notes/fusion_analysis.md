@@ -23,6 +23,11 @@ All three share the identical error profile: 20% false-negative rate, position n
 Fusion of either kind is a large improvement over no fusion: both naive_fusion and trust_weighted_fusion recover roughly 78 detections per run that would otherwise be missed, cutting missed-response counts nearly in half or more (20.6 → 7.4/9.0) and cutting collisions dramatically (25.8 → 0.4 for naive, 25.8 → 3.6 for trust-weighted).
 
 ## Limitations
+### No Fusion : 
+- With no fusion the risk of getting collided into other drones or obstacles inreases drasticcally.
+### Naive fusion: 
+- Naive fusion decreases the chances of collosion by some percent by still it cannot be trusted weather the object detected is true or not.
+
 
 
 ## Whether results support the hypothesis
