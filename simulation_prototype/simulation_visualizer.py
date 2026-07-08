@@ -1,6 +1,7 @@
 """
 Simulation Visualizer: Replay and visualize UAV swarm scenarios from CSV logs.
-Supports live viewing, replay from logs, and video export (mp4/gif).
+Supports live viewing, replay from logs, video export (mp4/gif), and
+side-by-side fusion-mode comparison videos.
 """
 
 import csv
@@ -33,6 +34,10 @@ class SimulationData:
         self.steps: int = 0
         self.obstacle_pos: Tuple[float, float] = (50.0, 50.0)
         self.obstacle_radius: float = 5.0
+        # Mission outcome, precomputed once so the renderer can show a
+        # definitive SUCCESS/FAILURE instead of only ever "In Progress".
+        self.mission_success: bool = False
+        self.mission_success_step: Optional[int] = None
 
     @staticmethod
     def from_csv(csv_path: str) -> "SimulationData":
@@ -68,10 +73,22 @@ class SimulationData:
                 float(data.rows[0]["actual_obstacle_x"]),
                 float(data.rows[0]["actual_obstacle_y"]),
             )
-            # ponytail: Assuming fixed obstacle radius across logs
+            # Assuming fixed obstacle radius across logs
             data.obstacle_radius = 5.0
         except (ValueError, KeyError):
             pass
+
+        # Determine mission outcome: find the first step (if any) at which
+        # mission_completed_flag is True for any UAV. If the log ends
+        # without that ever happening, the mission is a FAILURE, not
+        # perpetually "In Progress".
+        for row in data.rows:
+            flag = row.get("mission_completed_flag")
+            if flag in ("True", True):
+                step = int(row["step"])
+                if data.mission_success_step is None or step < data.mission_success_step:
+                    data.mission_success_step = step
+        data.mission_success = data.mission_success_step is not None
 
         return data
 
@@ -81,15 +98,24 @@ class SimulationData:
 
 
 class SimulationVisualizer:
-    """Visualizes UAV swarm simulation scenarios."""
+    """Visualizes UAV swarm simulation scenarios.
 
-    def __init__(self, data: SimulationData, figsize: Tuple[int, int] = (12, 10)):
+    Normally creates its own figure/axis. For multi-panel comparison
+    renders (see `generate_fusion_comparison_video`), an existing
+    `fig`/`ax` pair can be passed in so several scenarios share one figure.
+    """
+
+    def __init__(self, data: SimulationData, figsize: Tuple[int, int] = (12, 10),
+                 fig=None, ax=None):
         self.data = data
         self.figsize = figsize
         self.current_step = 0
 
-        # Setup figure
-        self.fig, self.ax = plt.subplots(figsize=figsize)
+        # Setup figure (or reuse one provided by a multi-panel caller)
+        if fig is not None and ax is not None:
+            self.fig, self.ax = fig, ax
+        else:
+            self.fig, self.ax = plt.subplots(figsize=figsize)
         self.setup_axis()
 
         # Persistent plot elements
@@ -221,8 +247,6 @@ class SimulationVisualizer:
                 pass
 
             # Draw collision-risk zone if applicable
-            # ponytail: collision_risk_flag now correctly reflects near_miss_distance threshold
-            # which triggers only when real threat is detected, improved from phantom-only detection
             if row.get("collision_risk_flag") == "True" or row.get("collision_risk_flag") is True:
                 dist = float(row.get("nearest_entity_distance", 10))
                 if dist < 5:
@@ -249,18 +273,32 @@ class SimulationVisualizer:
         time_s = float(info_row.get("time_s", 0))
         scenario = info_row.get("scenario", "unknown")
         error_type = info_row.get("perception_error_type", "none")
-        mission_ok = info_row.get("mission_completed_flag", "False")
         action_taken = info_row.get("action_taken", "move")
 
-        # ponytail: action_taken now distinguishes "avoidance" vs "false_avoidance"
-        # based on triggered_real vs triggered_phantom, matching improved simulation logic
+        # Mission status: SUCCESS once mission_completed_flag has gone True
+        # at or before this step; FAILURE once we reach the final logged
+        # step without that ever happening; otherwise still In Progress.
+        is_last_step = step >= self.data.steps - 1
+        if self.data.mission_success and step >= self.data.mission_success_step:
+            mission_status = "SUCCESS"
+        elif is_last_step and not self.data.mission_success:
+            mission_status = "FAILURE"
+        else:
+            mission_status = "In Progress"
+
         info_text = f"""Step: {step} | Time: {time_s:.1f}s
 Scenario: {scenario}
 Action: {action_taken}
 Error: {error_type}
-Mission: {'? SUCCESS' if mission_ok in ('True', True) else 'In Progress'}"""
+Mission: {mission_status}"""
 
         self.info_text.set_text(info_text)
+        if mission_status == "SUCCESS":
+            self.info_text.set_bbox(dict(boxstyle="round", facecolor="lightgreen", alpha=0.7))
+        elif mission_status == "FAILURE":
+            self.info_text.set_bbox(dict(boxstyle="round", facecolor="lightcoral", alpha=0.7))
+        else:
+            self.info_text.set_bbox(dict(boxstyle="round", facecolor="wheat", alpha=0.5))
 
         self.fig.canvas.draw_idle()
 
@@ -340,13 +378,186 @@ Mission: {'? SUCCESS' if mission_ok in ('True', True) else 'In Progress'}"""
         plt.show()
 
 
+class LiveSimulationView:
+    """Live view for use *while a simulation is actually running*, as
+    opposed to replaying a CSV log after the fact.
+
+    A running simulation loop (e.g. inside simple_swarm_sim.py) can create
+    one of these and call `update_step()` once per timestep with that
+    step's UAV rows (same field names as a CSV log row: uav_id,
+    uav_pos_x/y, goal_pos_x/y, actual_obstacle_x/y, perceived_obstacle_x/y,
+    action_taken, collision_risk_flag, mission_completed_flag, etc). The
+    plot window updates live, frame by frame, as the simulation executes -
+    no log file has to exist yet.
+
+    Example integration inside a simulation's step loop:
+
+        from simulation_visualizer import LiveSimulationView
+
+        view = LiveSimulationView(scenario_name="baseline",
+                                   world_width=100, world_height=100,
+                                   obstacle_pos=(50, 50))
+        for step in range(num_steps):
+            rows = [uav.to_log_row(step) for uav in uavs]  # one dict/UAV
+            view.update_step(step, rows)
+        view.close()
+
+    If no interactive GUI backend is available (e.g. running headless on a
+    server), `update_step` fails silently after the first attempt so a
+    simulation run is never blocked by the lack of a display.
+    """
+
+    def __init__(self, scenario_name: str = "live", world_width: float = 100.0,
+                 world_height: float = 100.0, obstacle_pos: Tuple[float, float] = (50.0, 50.0),
+                 obstacle_radius: float = 5.0, figsize: Tuple[int, int] = (12, 10),
+                 pause: float = 0.001):
+        data = SimulationData()
+        data.scenario_name = scenario_name
+        data.world_width = world_width
+        data.world_height = world_height
+        data.obstacle_pos = obstacle_pos
+        data.obstacle_radius = obstacle_radius
+        data.steps = 0
+        data.num_uavs = 0
+
+        self._pause = pause
+        self._known_uavs = set()
+        self._gui_ok = True
+
+        try:
+            plt.ion()
+            self.viz = SimulationVisualizer(data, figsize=figsize)
+        except Exception as e:
+            print(f"LiveSimulationView: no display available, live view disabled ({e})")
+            self._gui_ok = False
+            self.viz = None
+
+    def update_step(self, step: int, rows: List[Dict]):
+        """Push one timestep's worth of UAV rows into the live plot."""
+        if not self._gui_ok or self.viz is None:
+            return
+        try:
+            for row in rows:
+                uav_id = int(row["uav_id"])
+                self._known_uavs.add(uav_id)
+                self.viz.data.uav_trajectories[uav_id].append(
+                    (float(row["uav_pos_x"]), float(row["uav_pos_y"]))
+                )
+            self.viz.data.rows.extend(rows)
+            self.viz.data.num_uavs = len(self._known_uavs)
+            self.viz.data.steps = step + 1
+
+            # Live view has no future data, so it cannot yet know if the
+            # mission will ultimately succeed - only that it hasn't yet.
+            for row in rows:
+                flag = row.get("mission_completed_flag")
+                if flag in ("True", True) and self.viz.data.mission_success_step is None:
+                    self.viz.data.mission_success = True
+                    self.viz.data.mission_success_step = step
+
+            self.viz.render_step(step)
+            plt.pause(self._pause)
+        except Exception as e:
+            print(f"LiveSimulationView: disabling live view after error ({e})")
+            self._gui_ok = False
+
+    def close(self):
+        """Close the live view window."""
+        if self.viz is not None:
+            try:
+                plt.ioff()
+                plt.close(self.viz.fig)
+            except Exception:
+                pass
+
+
+def _load_available_scenarios(logs_dir: str, scenario_names: Tuple[str, ...],
+                               run: str = "run1") -> List[Tuple[str, "SimulationData"]]:
+    """Load whichever of the requested scenario logs actually exist."""
+    loaded = []
+    for name in scenario_names:
+        log_path = os.path.join(logs_dir, f"{name}_{run}.csv")
+        if not os.path.exists(log_path):
+            print(f"  (skipping {name}: no log at {log_path})")
+            continue
+        loaded.append((name, SimulationData.from_csv(log_path)))
+    return loaded
+
+
+def generate_fusion_comparison_video(
+    logs_dir: str = "logs",
+    media_dir: str = "media",
+    fps: int = 5,
+    scenario_names: Tuple[str, ...] = ("naive_fusion", "trust_weighted_fusion", "no_fusion_matched"),
+    output_name: str = "fusion_comparison_video.mp4",
+) -> Optional[str]:
+    """Render a side-by-side comparison video of the fusion-mode scenarios
+    (naive fusion vs trust-weighted fusion vs no-fusion baseline, or
+    whichever subset of these has logs available), sharing one figure so
+    they can be watched and judged against each other directly."""
+    print(f"Fusion comparison: looking for {scenario_names} in {logs_dir}/")
+    loaded = _load_available_scenarios(logs_dir, scenario_names)
+
+    if len(loaded) < 2:
+        print("  Not enough fusion-mode logs found (need at least 2) - skipping comparison video.")
+        return None
+
+    if shutil.which("ffmpeg") is None:
+        print("  ffmpeg not found on PATH - skipping fusion comparison video.")
+        return None
+
+    n = len(loaded)
+    fig, axes = plt.subplots(1, n, figsize=(6.5 * n, 6.5))
+    if n == 1:
+        axes = [axes]
+
+    visualizers = []
+    for ax, (name, data) in zip(axes, loaded):
+        viz = SimulationVisualizer(data, fig=fig, ax=ax)
+        visualizers.append(viz)
+
+    max_steps = max(v.data.steps for v in visualizers)
+
+    def animate(frame):
+        for v in visualizers:
+            step = min(frame, v.data.steps - 1)
+            v.render_step(step)
+        return []
+
+    anim = animation.FuncAnimation(
+        fig, animate, frames=max_steps, interval=1000 // fps, repeat=True
+    )
+
+    # One shared legend for the whole comparison figure rather than one per panel.
+    legend_elements = [
+        patches.Patch(facecolor="red", alpha=0.6, label="Actual Obstacle"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="gray", markersize=8, label="UAV"),
+        Line2D([0], [0], marker="s", color="w", markerfacecolor="none", markeredgecolor="gray", markersize=8, label="Goal"),
+        Line2D([0], [0], color="gray", linestyle="--", label="Perceived Obstacle"),
+        patches.Patch(facecolor="orange", alpha=0.2, label="Collision-Risk Zone"),
+    ]
+    fig.legend(handles=legend_elements, loc="lower center", ncol=len(legend_elements), fontsize=9)
+    fig.suptitle("Fusion Mode Comparison", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    os.makedirs(media_dir, exist_ok=True)
+    out_path = os.path.join(media_dir, output_name)
+    writer = animation.FFMpegWriter(fps=fps)
+    anim.save(out_path, writer=writer, dpi=100)
+    plt.close(fig)
+    print(f"Saved fusion comparison video to {out_path}")
+    return out_path
+
+
 def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = "logs",
                     media_dir: str = "media", fps: int = 5, show_popups: bool = True) -> int:
     """Default (no-args) behavior: for every scenario declared in the config,
     load its run1 log, pop up an auto-playing preview, and save an MP4 to
     media/. Scenario list is read from the config (not hardcoded) so this
     stays in sync with whatever scenarios simple_swarm_sim.py/simulation_config.json
-    define - including newly added ones like no_fusion_matched."""
+    define - including newly added ones like no_fusion_matched. Also
+    generates a side-by-side fusion-mode comparison video if enough of
+    those scenarios' logs are present."""
     with open(config_path) as f:
         config = json.load(f)
     scenario_names = list(config["scenarios"].keys())
@@ -396,6 +607,15 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
 
     success = sum(1 for v in results.values() if v)
     print(f"\nDone: {success}/{len(scenario_names)} videos saved to {media_dir}/")
+
+    # Fusion comparison video (best-effort; only if the relevant scenarios exist).
+    fusion_candidates = tuple(
+        n for n in ("naive_fusion", "trust_weighted_fusion", "no_fusion_matched") if n in scenario_names
+    )
+    if len(fusion_candidates) >= 2:
+        print()
+        generate_fusion_comparison_video(logs_dir, media_dir, fps, scenario_names=fusion_candidates)
+
     return 0 if success == len(scenario_names) else 1
 
 
@@ -412,9 +632,11 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["interactive", "mp4", "gif"],
+        choices=["interactive", "mp4", "gif", "live-demo"],
         default="interactive",
-        help="Visualization mode",
+        help="Visualization mode. 'live-demo' replays --log through the "
+        "LiveSimulationView update_step() API (the same call pattern a "
+        "running simulation would use) instead of the static replay path.",
     )
     parser.add_argument(
         "--output",
@@ -445,7 +667,16 @@ def main():
         "--no-popup", action="store_true",
         help="Batch mode only: skip popup previews, just save the MP4s",
     )
+    parser.add_argument(
+        "--fusion-comparison", action="store_true",
+        help="Generate only the side-by-side fusion-mode comparison video "
+        "from --logs-dir into --media-dir and exit.",
+    )
     args = parser.parse_args()
+
+    if args.fusion_comparison:
+        generate_fusion_comparison_video(args.logs_dir, args.media_dir, args.fps)
+        return 0
 
     if args.log is None:
         return batch_generate(args.config, args.logs_dir, args.media_dir, args.fps,
@@ -466,6 +697,24 @@ def main():
     print(
         f"Loaded {data.num_uavs} UAVs, {data.steps} steps, scenario: {data.scenario_name}"
     )
+
+    if args.mode == "live-demo":
+        # Demonstrates the LiveSimulationView API (the same one a running
+        # simulation loop would call) by feeding it the log's rows one
+        # step at a time instead of loading the whole CSV into a static
+        # replay - i.e. a live view, not a replay.
+        view = LiveSimulationView(
+            scenario_name=data.scenario_name,
+            world_width=data.world_width,
+            world_height=data.world_height,
+            obstacle_pos=data.obstacle_pos,
+            obstacle_radius=data.obstacle_radius,
+            figsize=tuple(args.figsize),
+        )
+        for step in range(data.steps):
+            view.update_step(step, data.get_step_data(step))
+        view.close()
+        return 0
 
     viz = SimulationVisualizer(data, figsize=tuple(args.figsize))
 
