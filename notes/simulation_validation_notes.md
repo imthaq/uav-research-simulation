@@ -32,3 +32,16 @@ A) Yes, when collosion risk is high the force of repulsion is also high and when
 -  CSV values match actual simulation behavior
 
 A) Yes it does.
+
+<hr>
+
+# Extra Questions: 
+- what looked wrong
+
+A) The mission success rate was very low in every testcase.
+- what was fixed
+
+A) The detection logic of UAV to avoid treating other UAV as obstacle when it reaches the goal.
+- what still needs improvement
+
+A) To counter the issue of sensor dropout and latency is UAVs.
