@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import math
+import shutil
 import argparse
 from pathlib import Path
 from collections import defaultdict
@@ -352,6 +353,13 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
     os.makedirs(media_dir, exist_ok=True)
 
     print(f"Batch mode: {len(scenario_names)} scenario(s) from {config_path}\n")
+
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    if not ffmpeg_ok:
+        print("NOTE: ffmpeg not found on PATH - MP4s will be skipped this run (popups still work).")
+        print("      Install it (e.g. https://www.gyan.dev/ffmpeg/ or `winget install ffmpeg`),")
+        print("      make sure it's on PATH, and re-run to get the videos.\n")
+
     results = {}
     for name in scenario_names:
         log_path = os.path.join(logs_dir, f"{name}_run1.csv")
@@ -362,18 +370,29 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
 
         print(f"{name}: loading {log_path}")
         data = SimulationData.from_csv(log_path)
-        viz = SimulationVisualizer(data)
 
         if show_popups:
+            viz = SimulationVisualizer(data)
             try:
                 viz.play_auto(fps=fps)
             except Exception as e:
                 print(f"  (skipping popup view: {e})")
-                viz = SimulationVisualizer(data)  # fig from failed show() may be unusable; start clean
 
+        if not ffmpeg_ok:
+            results[name] = False
+            continue
+
+        # play_auto() closes its own figure/canvas when done (and may have
+        # torn it down on a real GUI backend), so build a fresh visualizer
+        # for saving rather than reusing a figure that's no longer alive.
+        viz = SimulationVisualizer(data)
         out_path = os.path.join(media_dir, f"{name}_video.mp4")
-        viz.save_animation(out_path, fps=fps, dpi=100)
-        results[name] = True
+        try:
+            viz.save_animation(out_path, fps=fps, dpi=100)
+            results[name] = True
+        except Exception as e:
+            print(f"  video save failed for {name}: {e}")
+            results[name] = False
 
     success = sum(1 for v in results.values() if v)
     print(f"\nDone: {success}/{len(scenario_names)} videos saved to {media_dir}/")
