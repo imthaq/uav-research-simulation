@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--config", default="simulation_config.json")
     parser.add_argument("--runs", type=int, default=5, help="Number of seeded runs per scenario")
     parser.add_argument("--scenario", default=None, help="Only analyze this one scenario")
-    parser.add_argument("--output", default="results/results_summary.csv")
+    parser.add_argument("--output", default="logs/final_metric_summary.csv")
     args = parser.parse_args()
 
     if args.runs < 1:
