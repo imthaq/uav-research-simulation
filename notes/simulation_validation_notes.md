@@ -3,6 +3,7 @@
 
 - UAVs move toward the goal correctly.
 A)  Yes  the UAV moves towards its goal correctly.
+
 -  UAVs avoid obstacles when detection is correct.
 A) Yes when the field of UAV obstacles detection detects an obtacles it a vector anti-parrallel to the direction of goal vector of the UAV, hence adding a repulsion factor to the movement.
 -  False positives create unnecessary avoidance.
