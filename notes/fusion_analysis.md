@@ -24,7 +24,7 @@ Fusion of either kind is a large improvement over no fusion: both naive_fusion a
 
 ## Limitations
 ### No Fusion : 
-- With no fusion the risk of getting collided into other drones or obstacles inreases drasticcally.
+- With no fusion the risk of getting collided into other drones or obstacles increases drastically.
 ### Naive fusion: 
 - Naive fusion decreases the chances of collosion by some percent by still it cannot be trusted weather the object detected is true or not.
 
