@@ -64,21 +64,21 @@
     },
     "false_positive": {
       "description": "Phantom (ghost) detections only.",
-      "false_positive_rate": 0.0,
+      "false_positive_rate": 0.08,
       "false_negative_rate": 0.0,
       "fusion_mode": "no_fusion"
     },
     "false_negative": {
       "description": "Missed detections only.",
       "false_positive_rate": 0.0,
-      "false_negative_rate": 0.4,
+      "false_negative_rate": 0.25,
       "fusion_mode": "no_fusion"
     },
     "sensor_noise": {
       "description": "Gaussian position noise on real detections only.",
       "false_positive_rate": 0.0,
       "false_negative_rate": 0.0,
-      "position_noise_std": 0.3,
+      "position_noise_std": 1.5,
       "fusion_mode": "no_fusion"
     },
     "latency": {
@@ -92,7 +92,7 @@
       "description": "Periodic total sensor blackouts.",
       "false_positive_rate": 0.0,
       "false_negative_rate": 0.0,
-      "dropout_prob": 0.3,
+      "dropout_prob": 0.02,
       "dropout_duration_steps": 8,
       "fusion_mode": "no_fusion"
     },

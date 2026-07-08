@@ -412,11 +412,16 @@ class Simulation:
             self.detection_buffer[i].append((t, raw_perceived))
             perceived = self._get_delayed_perception(i, t)
 
+            # Clock starts the moment a detection exists at all (i.e. within
+            # sensor_range, which true_dets is already filtered to) - not once
+            # it closes to near_miss_distance. Latency/dropout/false-negative
+            # have nothing left to delay by the time something is that close,
+            # since it's already been sitting in the perceived list for many
+            # steps (near_miss_distance 3.5 << sensor_range 15).
             for d in true_dets:
-                if d["distance"] <= self.near_miss_distance:
-                    key = (i, d["id"])
-                    if key not in self._threat_first_true_step:
-                        self._threat_first_true_step[key] = t
+                key = (i, d["id"])
+                if key not in self._threat_first_true_step:
+                    self._threat_first_true_step[key] = t
             perceived_ids = {d["id"] for d in perceived if not d.get("is_phantom")}
             for pid in perceived_ids:
                 key = (i, pid)
