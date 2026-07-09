@@ -41,6 +41,14 @@
     "avoidance_gain": 6.0,
     "tangential_gain": 4.0
   },
+  "radar": {
+    "range_noise_std": 0.3,
+    "bearing_noise_std": 0.0349066,
+    "radial_velocity_noise_std": 0.1,
+    "radar_detection_probability": 0.95,
+    "radar_false_alarm_probability": 0.05,
+    "radar_clutter_density": 0.5
+  },
   "perception_errors": {
     "false_positive_rate": 0.0,
     "false_negative_rate": 0.0,

@@ -35,7 +35,37 @@ touching or re-implementing any of Simulation's own logic:
 Each row reported has: time_step, radar_id, target_id, true_target_x/y,
 target_velocity_x/y, true_range/bearing/radial_velocity, measured_range/
 bearing/radial_velocity, detected_x/y, confidence_score, detection_status,
-false_alarm_flag, missed_detection_flag, clutter_flag, dropout_flag.
+false_alarm_flag, missed_detection_flag, clutter_flag, dropout_flag,
+radar_pd_miss_flag, false_alarm_source.
+
+Radar probability of detection (Task 5)
+----------------------------------------
+On top of the existing false_negative_rate perception model (which emulates
+upstream perception/comms dropping a detection), this module layers a
+genuine radar sensor-model gate: radar_detection_probability (P_D). For
+every real (non-phantom) detection that survives Perception.process, an
+independent Bernoulli trial with probability P_D decides whether the radar
+actually registers it THIS scan. A low P_D increases missed detections
+(missed_detection_flag=True) beyond whatever false_negative_rate already
+produces, which can increase missed responses, collision risk, and reduce
+mission success - because the detection is genuinely removed from what the
+UAV acts on, not just logged as missed after the fact.
+
+Radar false alarms / clutter (Task 6)
+--------------------------------------
+Independently of the existing config-driven false_positive_rate ("phantom")
+mechanism, this module also generates radar clutter every step via
+_generate_clutter(): a Poisson-distributed number of clutter "candidate
+returns" (rate = radar_clutter_density) are drawn inside the radar's
+sensing disk, and each candidate is confirmed as a reported false detection
+with probability radar_false_alarm_probability (P_FA). Confirmed clutter
+points get a random range/bearing (and therefore x/y), a confidence score,
+and are flagged false_alarm_flag=True/clutter_flag=True. They are injected
+into the same detection stream the UAV steers on (marked is_phantom=True so
+Simulation's existing avoidance/steering logic reacts to them exactly like
+any other false detection), which can increase unnecessary avoidance, wrong
+decisions, and response time. This runs on every step of every scenario -
+there is no separate demo scenario for it.
 """
 
 import argparse
@@ -44,7 +74,7 @@ import json
 import math
 import random
 
-from simple_swarm_sim import Simulation, dist
+from simple_swarm_sim import Simulation, dist, clamp
 
 
 def _range_bearing_radial(observer_pos, observer_vel, target_pos, target_vel):
@@ -85,6 +115,17 @@ class RadarLikeModel:
     DEFAULT_BEARING_NOISE_STD = math.radians(2.0)   # radians, ~2 deg 1-sigma
     DEFAULT_RADIAL_VELOCITY_NOISE_STD = 0.1         # units/sec, 1-sigma
 
+    # Task 5: radar probability of detection. Independent of
+    # false_negative_rate - this is the radar's own per-scan detection gate.
+    DEFAULT_RADAR_DETECTION_PROBABILITY = 0.95      # P_D
+
+    # Task 6: radar false alarm / clutter model.
+    DEFAULT_RADAR_FALSE_ALARM_PROBABILITY = 0.05    # P_FA: chance a clutter
+                                                     # candidate return gets
+                                                     # reported as a detection
+    DEFAULT_RADAR_CLUTTER_DENSITY = 0.5             # mean clutter candidate
+                                                     # returns per scan (Poisson rate)
+
     def __init__(self, config, scenario_name):
         self.cfg = config
         self.scenario_name = scenario_name
@@ -105,6 +146,22 @@ class RadarLikeModel:
         self.radial_velocity_noise_std = scn.get(
             "radial_velocity_noise_std",
             radar_cfg.get("radial_velocity_noise_std", self.DEFAULT_RADIAL_VELOCITY_NOISE_STD))
+
+        # Task 5: radar probability of detection (P_D). Scenario override ->
+        # top-level "radar" config section -> built-in default.
+        self.detection_probability = scn.get(
+            "radar_detection_probability",
+            radar_cfg.get("radar_detection_probability", self.DEFAULT_RADAR_DETECTION_PROBABILITY))
+
+        # Task 6: radar false alarm probability (P_FA) and clutter density.
+        self.false_alarm_probability = scn.get(
+            "radar_false_alarm_probability",
+            radar_cfg.get("radar_false_alarm_probability", self.DEFAULT_RADAR_FALSE_ALARM_PROBABILITY))
+        self.clutter_density = scn.get(
+            "radar_clutter_density",
+            radar_cfg.get("radar_clutter_density", self.DEFAULT_RADAR_CLUTTER_DENSITY))
+
+        self._clutter_counter = 0  # monotonically increasing id suffix for generated clutter points
 
         self._capture = {}  # uav_id -> captured true/final-perceived data for the current step
         self.rows = []
@@ -142,6 +199,68 @@ class RadarLikeModel:
         d["measured_bearing"] = noisy_bearing
 
     # ------------------------------------------------------------------
+    # Task 6: radar false alarm / clutter generation
+    # ------------------------------------------------------------------
+    def _poisson_sample(self, lam):
+        """Knuth's algorithm, dependency-free. Returns a non-negative int
+        drawn from Poisson(lam); 0 if lam <= 0."""
+        if lam <= 0:
+            return 0
+        limit = math.exp(-lam)
+        k = 0
+        p = 1.0
+        while True:
+            k += 1
+            p *= self.radar_rng.random()
+            if p <= limit:
+                return k - 1
+
+    def _generate_clutter(self, uav_pos):
+        """Generates this scan's confirmed radar clutter detections for one
+        UAV. The number of *candidate* clutter returns inside the sensing
+        disk is drawn from Poisson(radar_clutter_density); each candidate is
+        independently confirmed as a reported false detection with
+        probability radar_false_alarm_probability (P_FA). This runs every
+        step for every scenario - it is not a special demo scenario, it is
+        the radar's ordinary noise floor."""
+        dets = []
+        num_candidates = self._poisson_sample(self.clutter_density)
+        for _ in range(num_candidates):
+            if self.radar_rng.random() >= self.false_alarm_probability:
+                continue  # candidate didn't cross the detection threshold this scan
+
+            rng_ = self.radar_rng.uniform(0.5, self.sim.sensor_range)
+            bearing = self.radar_rng.uniform(0.0, 2 * math.pi)
+            x = uav_pos[0] + rng_ * math.cos(bearing)
+            y = uav_pos[1] + rng_ * math.sin(bearing)
+            confidence = round(clamp(self.radar_rng.uniform(0.2, 0.7), 0.0, 1.0), 3)
+
+            self._clutter_counter += 1
+            dets.append({
+                "kind": "clutter",
+                "id": f"clutter_{self._clutter_counter}",
+                "x": x, "y": y,
+                "distance": rng_,
+                # random range/bearing, logged directly (not derived via
+                # _apply_radar_noise, since clutter has no ground-truth
+                # target underneath to noise a measurement of).
+                "measured_range": rng_,
+                "measured_bearing": bearing,
+                # is_phantom=True routes it through Simulation's existing
+                # steering/avoidance logic exactly like any other false
+                # detection (see Simulation._steer), so unnecessary
+                # avoidance/wrong-decision/response-time effects show up
+                # without touching simple_swarm_sim.py at all.
+                "is_phantom": True,
+                "is_radar_clutter": True,
+                "false_alarm_flag": True,
+                "clutter_flag": True,
+                "confidence": confidence,
+                "true_confidence": confidence,
+            })
+        return dets
+
+    # ------------------------------------------------------------------
     # Non-invasive instrumentation
     # ------------------------------------------------------------------
     def _patch_perception(self):
@@ -157,14 +276,39 @@ class RadarLikeModel:
                 true_by_id = {d["id"]: d for d in true_snapshot}
 
                 perceived = _orig(true_detections, uav_pos)
+
+                # Task 5: radar probability of detection (P_D). Applied only
+                # to real (non-phantom) detections that survived the
+                # existing false_negative_rate/dropout model above - this is
+                # an independent, additional radar-level miss chance, not a
+                # replacement for it. A detection that fails this gate is
+                # genuinely removed from what the UAV acts on this step.
+                pd_missed_ids = []
+                surviving = []
+                for d in perceived:
+                    if d.get("is_phantom"):
+                        surviving.append(d)
+                        continue
+                    if self.radar_rng.random() < self.detection_probability:
+                        surviving.append(d)
+                    else:
+                        pd_missed_ids.append(d.get("id"))
+                perceived = surviving
+
                 for d in perceived:
                     self._apply_radar_noise(d, uav_pos, true_by_id)
+
+                # Task 6: radar false alarms / clutter - generated fresh
+                # every step, independent of the config-driven
+                # false_positive_rate "phantom" mechanism above.
+                perceived = perceived + self._generate_clutter(uav_pos)
 
                 self._capture[_uav_id] = {
                     "true_dets": true_snapshot,
                     "perceived": [dict(d) for d in perceived],  # overwritten again after fusion
                     "dropout": _perc.last_dropout,
                     "observer_pos": tuple(uav_pos),
+                    "pd_missed_ids": pd_missed_ids,
                 }
                 return perceived
 
@@ -215,13 +359,18 @@ class RadarLikeModel:
 
     def _make_row(self, t, uav_id, true_det, measured_det, observer_pos,
                   observer_vel, uav_vel, status,
-                  false_alarm=False, missed=False, dropout=False):
+                  false_alarm=False, missed=False, dropout=False,
+                  radar_pd_miss=False, clutter=False):
         target_id = true_det["id"] if true_det is not None else (
             measured_det.get("id") if measured_det is not None and measured_det.get("id") != "phantom"
             else None
         )
         if measured_det is not None and measured_det.get("id") == "phantom":
             target_id = f"phantom_t{t}_uav{uav_id}"
+
+        false_alarm_source = None
+        if false_alarm:
+            false_alarm_source = "radar_clutter" if clutter else "config_false_positive"
 
         true_x = true_det["x"] if true_det is not None else None
         true_y = true_det["y"] if true_det is not None else None
@@ -253,7 +402,9 @@ class RadarLikeModel:
             # along the noisy line-of-sight, using true target kinematics,
             # plus its own independent noise. No coherent Doppler for
             # phantoms (no real target underneath).
-            if target_id is not None and not target_id.startswith("phantom_"):
+            if (target_id is not None
+                    and not target_id.startswith("phantom_")
+                    and not target_id.startswith("clutter_")):
                 _, _, base_radial = _range_bearing_radial(
                     observer_pos, observer_vel, (detected_x, detected_y), target_vel)
                 if base_radial is not None:
@@ -280,8 +431,10 @@ class RadarLikeModel:
             "detection_status": status,
             "false_alarm_flag": bool(false_alarm),
             "missed_detection_flag": bool(missed),
-            "clutter_flag": bool(false_alarm),  # phantom/false-positive detections are this model's only clutter source
+            "clutter_flag": bool(clutter),
+            "false_alarm_source": false_alarm_source,
             "dropout_flag": bool(dropout),
+            "radar_pd_miss_flag": bool(radar_pd_miss),
         }
 
     def _finalize_step(self, t, pos_before, pos_after):
@@ -316,13 +469,22 @@ class RadarLikeModel:
                         uav_vel, status="dropout", missed=True, dropout=True))
                 continue
 
-            perceived_by_id = {d["id"]: d for d in perceived if d.get("id") != "phantom"}
-            phantom_dets = [d for d in perceived if d.get("id") == "phantom"]
+            # A detection is a false alarm if it's the legacy config-driven
+            # "phantom" (id == "phantom") or a Task 6 radar clutter point
+            # (is_radar_clutter). Both are excluded from perceived_by_id so
+            # they never get mistaken for a real target's detection below.
+            false_alarm_dets = [d for d in perceived
+                                 if d.get("id") == "phantom" or d.get("is_radar_clutter")]
+            false_alarm_ids = {d["id"] for d in false_alarm_dets}
+            perceived_by_id = {d["id"]: d for d in perceived if d["id"] not in false_alarm_ids}
+
+            pd_missed_ids = set(cap.get("pd_missed_ids", []))
 
             # A target is "detected" if it ended up in the final (post-
             # fusion) detection set for this UAV - whether that's because
             # the UAV's own sensor caught it, or because fusion supplied it
-            # after an individual miss. Otherwise it's "missed".
+            # after an individual miss. Otherwise it's "missed" - which
+            # includes Task 5's radar P_D gate removing it upstream.
             for d in true_dets:
                 meas = perceived_by_id.get(d["id"])
                 if meas is not None:
@@ -332,12 +494,14 @@ class RadarLikeModel:
                 else:
                     self.rows.append(self._make_row(
                         t, uav_id, d, None, observer_pos, observer_vel,
-                        uav_vel, status="missed", missed=True))
+                        uav_vel, status="missed", missed=True,
+                        radar_pd_miss=(d["id"] in pd_missed_ids)))
 
-            for pd in phantom_dets:
+            for fd in false_alarm_dets:
                 self.rows.append(self._make_row(
-                    t, uav_id, None, pd, observer_pos, observer_vel,
-                    uav_vel, status="false_alarm", false_alarm=True))
+                    t, uav_id, None, fd, observer_pos, observer_vel,
+                    uav_vel, status="false_alarm", false_alarm=True,
+                    clutter=bool(fd.get("is_radar_clutter"))))
 
     # ------------------------------------------------------------------
     # Driver
