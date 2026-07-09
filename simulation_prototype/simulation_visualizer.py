@@ -38,6 +38,11 @@ class SimulationData:
         # definitive SUCCESS/FAILURE instead of only ever "In Progress".
         self.mission_success: bool = False
         self.mission_success_step: Optional[int] = None
+        # True only while a LiveSimulationView is actively streaming steps in.
+        # A replay loaded from a finished CSV (from_csv) never sets this, so
+        # its behavior is unchanged. Live mode needs this because it doesn't
+        # know the final step count in advance - see render_step().
+        self.is_live: bool = False
 
     @staticmethod
     def from_csv(csv_path: str) -> "SimulationData":
@@ -278,7 +283,12 @@ class SimulationVisualizer:
         # Mission status: SUCCESS once mission_completed_flag has gone True
         # at or before this step; FAILURE once we reach the final logged
         # step without that ever happening; otherwise still In Progress.
-        is_last_step = step >= self.data.steps - 1
+        # While live (is_live=True), self.data.steps is just "how many steps
+        # have arrived so far", not the true final count - the sim might
+        # still be running - so we never claim FAILURE mid-stream. The final
+        # frame gets re-rendered with is_live=False by LiveSimulationView.close()
+        # once the run loop actually ends, which is when FAILURE can be shown.
+        is_last_step = step >= self.data.steps - 1 and not self.data.is_live
         if self.data.mission_success and step >= self.data.mission_success_step:
             mission_status = "SUCCESS"
         elif is_last_step and not self.data.mission_success:
@@ -405,6 +415,13 @@ class LiveSimulationView:
     If no interactive GUI backend is available (e.g. running headless on a
     server), `update_step` fails silently after the first attempt so a
     simulation run is never blocked by the lack of a display.
+
+    Mission status while running always reads SUCCESS or "In Progress" -
+    never FAILURE - since a live view can't know it has reached the final
+    step until the caller's loop actually ends. Call `close()` once the
+    loop is done; it reveals the true final status (including FAILURE, if
+    the mission never succeeded) for `hold_seconds` before closing the
+    window.
     """
 
     def __init__(self, scenario_name: str = "live", world_width: float = 100.0,
@@ -419,6 +436,7 @@ class LiveSimulationView:
         data.obstacle_radius = obstacle_radius
         data.steps = 0
         data.num_uavs = 0
+        data.is_live = True
 
         self._pause = pause
         self._known_uavs = set()
@@ -461,14 +479,27 @@ class LiveSimulationView:
             print(f"LiveSimulationView: disabling live view after error ({e})")
             self._gui_ok = False
 
-    def close(self):
-        """Close the live view window."""
-        if self.viz is not None:
-            try:
-                plt.ioff()
-                plt.close(self.viz.fig)
-            except Exception:
-                pass
+    def close(self, hold_seconds: float = 2.0):
+        """Reveal the true final mission status (SUCCESS/FAILURE), hold the
+        window open briefly so it can actually be seen, then close it.
+
+        While steps were still streaming in, render_step() never claimed
+        FAILURE (it doesn't know if more steps are coming). Now that the
+        caller's step loop has actually ended, is_live is flipped off and
+        the last received step is re-rendered once more so FAILURE can be
+        correctly shown if the mission never succeeded."""
+        if self.viz is None:
+            return
+        try:
+            if self._gui_ok:
+                self.viz.data.is_live = False
+                last_step = max(self.viz.data.steps - 1, 0)
+                self.viz.render_step(last_step)
+                plt.pause(hold_seconds)
+            plt.ioff()
+            plt.close(self.viz.fig)
+        except Exception:
+            pass
 
 
 def _load_available_scenarios(logs_dir: str, scenario_names: Tuple[str, ...],
@@ -619,6 +650,65 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
     return 0 if success == len(scenario_names) else 1
 
 
+def run_live_scenario(scenario_name: str, config_path: str = "simulation_config.json",
+                       out_log: Optional[str] = None, hold_seconds: float = 2.0,
+                       figsize: Tuple[int, int] = (12, 10)) -> Dict:
+    """Actually run a scenario (not replay a finished CSV) and watch it live.
+
+    This is where the two visualization paths meet: `simple_swarm_sim.py`
+    itself never touches LiveSimulationView or matplotlib at all - it only
+    knows how to run a scenario and produce log rows. This function is the
+    one place that drives that simulation *and* visualizes it, live, step
+    by step, keeping all visualization concerns in this module. It steps
+    the `Simulation` object exactly the same way `Simulation.run()` would
+    (same loop, same termination condition), just with a LiveSimulationView
+    watching each step as it happens.
+
+    Returns the same metrics dict `Simulation.run()` returns. If `out_log`
+    is given, also writes the full per-step CSV log there once finished, so
+    a live-watched run can still be replayed/exported later like any other.
+    """
+    from simple_swarm_sim import Simulation  # local import: only live mode needs this
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    sim = Simulation(config, scenario_name)
+    ox, oy, orad = sim.obstacle
+
+    view = LiveSimulationView(
+        scenario_name=scenario_name,
+        world_width=config["world"]["width"],
+        world_height=config["world"]["height"],
+        obstacle_pos=(ox, oy),
+        obstacle_radius=orad,
+        figsize=figsize,
+    )
+
+    t = 0
+    for t in range(sim.max_steps):
+        rows_before = len(sim.log_rows)
+        sim.step(t)
+        # sim.step() just appended exactly sim.num_uavs rows for this step -
+        # hand those straight to the live view, no CSV round-trip needed.
+        view.update_step(t, sim.log_rows[rows_before:])
+        if all(sim.reached_goal):
+            break
+
+    view.close(hold_seconds=hold_seconds)
+    metrics = sim._metrics(t)
+
+    if out_log:
+        os.makedirs(os.path.dirname(out_log) or ".", exist_ok=True)
+        fieldnames = list(sim.log_rows[0].keys())
+        with open(out_log, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(sim.log_rows)
+
+    return metrics
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Visualize UAV swarm simulation from CSV logs. "
@@ -632,11 +722,15 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["interactive", "mp4", "gif", "live-demo"],
+        choices=["interactive", "mp4", "gif", "live-demo", "live"],
         default="interactive",
         help="Visualization mode. 'live-demo' replays --log through the "
         "LiveSimulationView update_step() API (the same call pattern a "
-        "running simulation would use) instead of the static replay path.",
+        "running simulation would use) instead of the static replay path - "
+        "useful for testing the live view against a scenario that already "
+        "finished. 'live' actually RUNS --scenario (via simple_swarm_sim.py's "
+        "Simulation class) and watches it live as it computes, step by step - "
+        "no existing --log needed.",
     )
     parser.add_argument(
         "--output",
@@ -672,10 +766,52 @@ def main():
         help="Generate only the side-by-side fusion-mode comparison video "
         "from --logs-dir into --media-dir and exit.",
     )
+    parser.add_argument(
+        "--scenario", default=None,
+        help="'live' mode only: which scenario from --config to actually run "
+        "and watch live. Omit to run every scenario in --config live, one "
+        "window at a time.",
+    )
+    parser.add_argument(
+        "--out-log", default=None,
+        help="'live' mode only: write the finished run's CSV log here once "
+        "it completes (omit to not save a log). If --scenario is omitted "
+        "(running every scenario live), this is treated as a directory and "
+        "each scenario is written to <out-log>/<scenario>_live.csv.",
+    )
+    parser.add_argument(
+        "--live-hold", type=float, default=2.0,
+        help="'live' mode only: seconds to hold the final SUCCESS/FAILURE "
+        "frame on screen before closing each scenario's window (default: 2.0)",
+    )
     args = parser.parse_args()
 
     if args.fusion_comparison:
         generate_fusion_comparison_video(args.logs_dir, args.media_dir, args.fps)
+        return 0
+
+    if args.mode == "live":
+        # True live mode: actually run the scenario(s) and watch as they
+        # compute, instead of replaying something already finished. Doesn't
+        # need --log as an input (there's nothing to load yet).
+        with open(args.config) as f:
+            config = json.load(f)
+        scenario_names = [args.scenario] if args.scenario else list(config["scenarios"].keys())
+
+        for name in scenario_names:
+            if args.out_log is None:
+                out_log = None
+            elif args.scenario is not None:
+                out_log = args.out_log
+            else:
+                out_log = os.path.join(args.out_log, f"{name}_live.csv")
+
+            print(f"--- live: {name} ---")
+            metrics = run_live_scenario(
+                name, config_path=args.config, out_log=out_log,
+                hold_seconds=args.live_hold, figsize=tuple(args.figsize),
+            )
+            print(json.dumps(metrics, indent=2))
         return 0
 
     if args.log is None:
