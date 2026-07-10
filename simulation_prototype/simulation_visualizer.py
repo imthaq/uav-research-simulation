@@ -102,6 +102,58 @@ class SimulationData:
         return [r for r in self.rows if int(r["step"]) == step]
 
 
+class RadarData:
+    """Parsed radar detection rows (radar_like_model.py) and radar track
+    rows (radar_track_model.py) for one scenario, indexed by
+    (step, radar_id) - radar_id is the same as uav_id - so the visualizer
+    can look up "what did this UAV's radar see/track this step" in O(1)
+    per frame. Both logs are optional and independent: either can be
+    missing and the visualizer just skips the pieces that depend on it."""
+
+    def __init__(self):
+        self.detections: Dict[Tuple[int, int], List[Dict]] = defaultdict(list)
+        self.tracks: Dict[Tuple[int, int], List[Dict]] = defaultdict(list)
+
+    @staticmethod
+    def from_csvs(scenario_name: str, radar_log_path: Optional[str] = None,
+                   track_log_path: Optional[str] = None) -> "RadarData":
+        """Loads and filters the (possibly multi-scenario) combined CSVs
+        that radar_like_model.py / radar_track_model.py write, keeping only
+        this scenario's rows. Missing/absent paths just leave that half
+        empty rather than raising."""
+        rd = RadarData()
+        if radar_log_path and os.path.exists(radar_log_path):
+            with open(radar_log_path) as f:
+                for row in csv.DictReader(f):
+                    if row.get("scenario") != scenario_name:
+                        continue
+                    key = (int(row["time_step"]), int(row["radar_id"]))
+                    rd.detections[key].append(row)
+        if track_log_path and os.path.exists(track_log_path):
+            with open(track_log_path) as f:
+                for row in csv.DictReader(f):
+                    if row.get("scenario") != scenario_name:
+                        continue
+                    key = (int(row["time_step"]), int(row["radar_id"]))
+                    rd.tracks[key].append(row)
+        return rd
+
+
+def _resolve_radar_params(config: dict, scenario_name: str) -> Tuple[float, float]:
+    """Mirrors radar_like_model.RadarLikeModel's own scenario-first config
+    resolution (scenario override -> top-level "radar" section -> default)
+    for just the two params the visualizer needs to draw: sensing range and
+    field of view. Keeping this logic in sync with RadarLikeModel matters -
+    otherwise the drawn sensing circle wouldn't match what the radar model
+    actually used to gate detections for that scenario."""
+    radar_cfg = config.get("radar", {})
+    scn = config.get("scenarios", {}).get(scenario_name, {})
+    default_range = config.get("sensing", {}).get("sensor_range", 15.0)
+    radar_range = scn.get("radar_max_range", radar_cfg.get("radar_max_range", default_range))
+    radar_fov = scn.get("radar_field_of_view", radar_cfg.get("radar_field_of_view", 360.0))
+    return float(radar_range), float(radar_fov)
+
+
 class SimulationVisualizer:
     """Visualizes UAV swarm simulation scenarios.
 
@@ -111,10 +163,19 @@ class SimulationVisualizer:
     """
 
     def __init__(self, data: SimulationData, figsize: Tuple[int, int] = (12, 10),
-                 fig=None, ax=None):
+                 fig=None, ax=None, radar_data: Optional["RadarData"] = None,
+                 radar_range: float = 15.0, radar_fov_deg: float = 360.0):
         self.data = data
         self.figsize = figsize
         self.current_step = 0
+
+        # Optional radar overlay: detections, tracks, sensing range/FOV.
+        # radar_data is None means "no radar log was supplied" - every
+        # radar-specific draw call below is skipped in that case, so the
+        # visualizer works exactly as before with no radar log present.
+        self.radar_data = radar_data
+        self.radar_range = radar_range
+        self.radar_fov_deg = radar_fov_deg
 
         # Setup figure (or reuse one provided by a multi-panel caller)
         if fig is not None and ax is not None:
@@ -132,6 +193,10 @@ class SimulationVisualizer:
         self.collision_zones = []
         self.goal_markers = {}
         self.info_text = None
+        # Everything radar-related is redrawn from scratch every step (like
+        # perceived_obstacles/collision_zones above), so one flat list of
+        # artists - patches AND text, both support .remove() - is enough.
+        self.radar_artists = []
 
     def setup_axis(self):
         """Configure the plot axis and static elements."""
@@ -186,6 +251,13 @@ class SimulationVisualizer:
                 artist.remove()
         self.perceived_obstacles.clear()
         self.collision_zones.clear()
+
+        for artist in self.radar_artists:
+            try:
+                artist.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        self.radar_artists.clear()
 
         # Process each UAV's data for this step
         for idx, row in enumerate(step_data):
@@ -261,6 +333,10 @@ class SimulationVisualizer:
                     self.ax.add_patch(collision_zone)
                     self.collision_zones.append(collision_zone)
 
+            # ---- Radar overlay (only if a RadarData was supplied) ----
+            if self.radar_data is not None:
+                self._draw_radar_overlay(step, uav_id, x, y, gx, gy, color, row)
+
         # Update info text
         if not self.info_text:
             self.info_text = self.ax.text(
@@ -296,11 +372,17 @@ class SimulationVisualizer:
         else:
             mission_status = "In Progress"
 
+        fusion_mode = info_row.get("fusion_mode", "no_fusion")
+        radar_error = self._radar_error_summary(step) if self.radar_data is not None else None
+
         info_text = f"""Step: {step} | Time: {time_s:.1f}s
 Scenario: {scenario}
 Action: {action_taken}
 Error: {error_type}
-Mission: {mission_status}"""
+Fusion: {fusion_mode}"""
+        if radar_error is not None:
+            info_text += f"\nRadar error: {radar_error}"
+        info_text += f"\nMission: {mission_status}"
 
         self.info_text.set_text(info_text)
         if mission_status == "SUCCESS":
@@ -312,6 +394,114 @@ Mission: {mission_status}"""
 
         self.fig.canvas.draw_idle()
 
+    def _draw_radar_overlay(self, step: int, uav_id: int, x: float, y: float,
+                             gx: float, gy: float, color, row: Dict):
+        """Draws everything radar-related for one UAV at one step: sensing
+        range, field-of-view wedge, this step's raw detections (color-coded
+        by real/false-alarm/clutter/missed), this step's radar tracks
+        (colored by tentative/confirmed/lost, labeled with track ID and
+        confidence), and a "fused" tag on the perceived-obstacle marker
+        when fusion is active for this run. All artists it creates are
+        appended to self.radar_artists so render_step() can wipe them clean
+        again next frame - nothing here is persistent."""
+        # Sensing range: faint fill + a thin ring so it reads at a glance
+        # without drowning out the UAV/obstacle markers underneath it.
+        if self.radar_range > 0:
+            fill = patches.Circle((x, y), self.radar_range, color=color,
+                                   alpha=0.05, linewidth=0)
+            ring = patches.Circle((x, y), self.radar_range, color=color,
+                                   alpha=0.3, fill=False, linestyle=":", linewidth=0.8)
+            self.ax.add_patch(fill)
+            self.ax.add_patch(ring)
+            self.radar_artists.extend([fill, ring])
+
+        # Field of view: only draw a wedge when it's actually restricted
+        # (360 = omnidirectional = no-op, matches radar_like_model.py).
+        # Heading is approximated the same way radar_like_model.py does:
+        # direction from the UAV to its own goal slot.
+        if self.radar_fov_deg < 360.0:
+            heading_deg = math.degrees(math.atan2(gy - y, gx - x))
+            half = self.radar_fov_deg / 2.0
+            wedge = patches.Wedge((x, y), self.radar_range, heading_deg - half,
+                                   heading_deg + half, color=color, alpha=0.10)
+            self.ax.add_patch(wedge)
+            self.radar_artists.append(wedge)
+
+        # This step's raw radar detections for this UAV.
+        for d in self.radar_data.detections.get((step, uav_id), []):
+            status = d.get("detection_status")
+            if status == "detected":
+                dx, dy = float(d["detected_x"]), float(d["detected_y"])
+                (pt,) = self.ax.plot(dx, dy, "x", color=color, markersize=6,
+                                      markeredgewidth=1.5)
+                self.radar_artists.append(pt)
+                conf = d.get("confidence_score")
+                if conf not in (None, ""):
+                    lbl = self.ax.text(dx + 0.6, dy + 0.6, f"{float(conf):.2f}",
+                                        fontsize=6, color=color)
+                    self.radar_artists.append(lbl)
+            elif status == "false_alarm":
+                dx, dy = float(d["detected_x"]), float(d["detected_y"])
+                is_clutter = d.get("clutter_flag") in ("True", True)
+                fa_color = "purple" if is_clutter else "magenta"
+                (pt,) = self.ax.plot(dx, dy, "^", color=fa_color, markersize=6, alpha=0.85)
+                self.radar_artists.append(pt)
+                lbl = self.ax.text(dx + 0.6, dy + 0.6, "clutter" if is_clutter else "false+",
+                                    fontsize=6, color=fa_color)
+                self.radar_artists.append(lbl)
+            elif status == "missed":
+                # Mark where the real target was, to show what the radar
+                # should have seen this scan but didn't.
+                tx, ty = d.get("true_target_x"), d.get("true_target_y")
+                if tx not in (None, "") and ty not in (None, ""):
+                    tx, ty = float(tx), float(ty)
+                    (pt,) = self.ax.plot(tx, ty, "o", markerfacecolor="none",
+                                          markeredgecolor="gray", markersize=8)
+                    self.radar_artists.append(pt)
+                    lbl = self.ax.text(tx + 0.6, ty - 1.2, "missed", fontsize=6, color="gray")
+                    self.radar_artists.append(lbl)
+
+        # This step's radar tracks for this UAV (from radar_track_model.py).
+        track_colors = {"tentative": "gray", "confirmed": color, "lost": "red"}
+        for t in self.radar_data.tracks.get((step, uav_id), []):
+            tx, ty = float(t["est_x"]), float(t["est_y"])
+            status = t.get("status", "tentative")
+            tcolor = track_colors.get(status, "gray")
+            (pt,) = self.ax.plot(tx, ty, "D", color=tcolor, markersize=6, alpha=0.9)
+            self.radar_artists.append(pt)
+            conf = t.get("confidence")
+            conf_s = f", c={float(conf):.2f}" if conf not in (None, "") else ""
+            lbl = self.ax.text(tx + 0.7, ty + 0.7, f"{t.get('track_id', '')} [{status}]{conf_s}",
+                                fontsize=6, color=tcolor)
+            self.radar_artists.append(lbl)
+
+        # Tag the existing perceived-obstacle marker as "fused" when this
+        # run's fusion mode actually combined more than one UAV's view.
+        if row.get("fusion_mode", "no_fusion") != "no_fusion":
+            px, py = row.get("perceived_obstacle_x"), row.get("perceived_obstacle_y")
+            if px not in (None, "") and py not in (None, ""):
+                lbl = self.ax.text(float(px), float(py) + 1.6, "fused",
+                                    fontsize=6, color=color, ha="center")
+                self.radar_artists.append(lbl)
+
+    def _radar_error_summary(self, step: int) -> str:
+        """Aggregates this step's radar-level error flags (dropout, false
+        alarm, clutter, missed, P_D miss) across every UAV's detections
+        into one short string for the info box - the radar-specific
+        counterpart to the existing perception_error_type column."""
+        flags = set()
+        for uav_id in range(self.data.num_uavs):
+            for d in self.radar_data.detections.get((step, uav_id), []):
+                if d.get("dropout_flag") in ("True", True):
+                    flags.add("dropout")
+                if d.get("false_alarm_flag") in ("True", True):
+                    flags.add("clutter" if d.get("clutter_flag") in ("True", True) else "false_alarm")
+                if d.get("missed_detection_flag") in ("True", True):
+                    flags.add("missed")
+                if d.get("radar_pd_miss_flag") in ("True", True):
+                    flags.add("pd_miss")
+        return "+".join(sorted(flags)) if flags else "none"
+
     def add_legend(self):
         """Add a legend to the plot."""
         legend_elements = [
@@ -321,6 +511,14 @@ Mission: {mission_status}"""
             Line2D([0], [0], color="gray", linestyle="--", label="Perceived Obstacle"),
             patches.Patch(facecolor="orange", alpha=0.2, label="Collision-Risk Zone"),
         ]
+        if self.radar_data is not None:
+            legend_elements += [
+                patches.Patch(facecolor="gray", alpha=0.15, label="Radar Sensing Range"),
+                Line2D([0], [0], marker="x", color="w", markeredgecolor="gray", markersize=8, label="Radar Detection"),
+                Line2D([0], [0], marker="^", color="w", markerfacecolor="magenta", markersize=8, label="False Alarm / Clutter"),
+                Line2D([0], [0], marker="o", color="w", markerfacecolor="none", markeredgecolor="gray", markersize=8, label="Missed Detection"),
+                Line2D([0], [0], marker="D", color="w", markerfacecolor="gray", markersize=8, label="Radar Track"),
+            ]
         self.ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
 
     def save_animation(self, output_path: str, fps: int = 5, dpi: int = 80):
@@ -581,20 +779,30 @@ def generate_fusion_comparison_video(
 
 
 def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = "logs",
-                    media_dir: str = "media", fps: int = 5, show_popups: bool = True) -> int:
+                    media_dir: str = "media", fps: int = 5, show_popups: bool = True,
+                    radar_log: Optional[str] = None, track_log: Optional[str] = None) -> int:
     """Default (no-args) behavior: for every scenario declared in the config,
     load its run1 log, pop up an auto-playing preview, and save an MP4 to
     media/. Scenario list is read from the config (not hardcoded) so this
     stays in sync with whatever scenarios simple_swarm_sim.py/simulation_config.json
     define - including newly added ones like no_fusion_matched. Also
     generates a side-by-side fusion-mode comparison video if enough of
-    those scenarios' logs are present."""
+    those scenarios' logs are present.
+
+    radar_log/track_log (if given and present on disk) are the combined,
+    multi-scenario CSVs radar_like_model.py / radar_track_model.py write;
+    each scenario's rows are filtered out of them automatically, and the
+    sensing range/FOV drawn per scenario come from this same config file
+    via _resolve_radar_params(), so the overlay always matches what that
+    scenario's radar model actually used."""
     with open(config_path) as f:
         config = json.load(f)
     scenario_names = list(config["scenarios"].keys())
     os.makedirs(media_dir, exist_ok=True)
 
     print(f"Batch mode: {len(scenario_names)} scenario(s) from {config_path}\n")
+    if radar_log and os.path.exists(radar_log):
+        print(f"  radar overlay: {radar_log}" + (f" + {track_log}" if track_log else "") + "\n")
 
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     if not ffmpeg_ok:
@@ -613,8 +821,15 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
         print(f"{name}: loading {log_path}")
         data = SimulationData.from_csv(log_path)
 
+        radar_data = None
+        radar_range, radar_fov = 15.0, 360.0
+        if radar_log:
+            radar_data = RadarData.from_csvs(name, radar_log, track_log)
+            radar_range, radar_fov = _resolve_radar_params(config, name)
+
         if show_popups:
-            viz = SimulationVisualizer(data)
+            viz = SimulationVisualizer(data, radar_data=radar_data,
+                                        radar_range=radar_range, radar_fov_deg=radar_fov)
             try:
                 viz.play_auto(fps=fps)
             except Exception as e:
@@ -627,7 +842,8 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
         # play_auto() closes its own figure/canvas when done (and may have
         # torn it down on a real GUI backend), so build a fresh visualizer
         # for saving rather than reusing a figure that's no longer alive.
-        viz = SimulationVisualizer(data)
+        viz = SimulationVisualizer(data, radar_data=radar_data,
+                                    radar_range=radar_range, radar_fov_deg=radar_fov)
         out_path = os.path.join(media_dir, f"{name}_video.mp4")
         try:
             viz.save_animation(out_path, fps=fps, dpi=100)
@@ -758,6 +974,19 @@ def main():
     parser.add_argument("--logs-dir", default="logs", help="Batch mode only")
     parser.add_argument("--media-dir", default="media", help="Batch mode only")
     parser.add_argument(
+        "--radar-log", default=None,
+        help="Path to the combined radar detection CSV from radar_like_model.py "
+        "(e.g. logs/radar_log.csv). When given, adds sensing range, FOV, "
+        "detections, false alarms/clutter, and missed-detection markers to "
+        "the plot. Optional - omit to visualize without the radar overlay.",
+    )
+    parser.add_argument(
+        "--track-log", default=None,
+        help="Path to the combined radar track CSV from radar_track_model.py "
+        "(e.g. logs/radar_track_log.csv). Adds track ID/status/confidence "
+        "markers on top of --radar-log. Optional.",
+    )
+    parser.add_argument(
         "--no-popup", action="store_true",
         help="Batch mode only: skip popup previews, just save the MP4s",
     )
@@ -816,7 +1045,8 @@ def main():
 
     if args.log is None:
         return batch_generate(args.config, args.logs_dir, args.media_dir, args.fps,
-                               show_popups=not args.no_popup)
+                               show_popups=not args.no_popup,
+                               radar_log=args.radar_log, track_log=args.track_log)
 
     # Validate inputs
     if not os.path.exists(args.log):
@@ -852,7 +1082,16 @@ def main():
         view.close()
         return 0
 
-    viz = SimulationVisualizer(data, figsize=tuple(args.figsize))
+    radar_data, radar_range, radar_fov = None, 15.0, 360.0
+    if args.radar_log:
+        radar_data = RadarData.from_csvs(data.scenario_name, args.radar_log, args.track_log)
+        if os.path.exists(args.config):
+            with open(args.config) as f:
+                radar_config = json.load(f)
+            radar_range, radar_fov = _resolve_radar_params(radar_config, data.scenario_name)
+
+    viz = SimulationVisualizer(data, figsize=tuple(args.figsize), radar_data=radar_data,
+                                radar_range=radar_range, radar_fov_deg=radar_fov)
 
     if args.mode == "interactive":
         viz.show_interactive()
