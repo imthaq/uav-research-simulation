@@ -21,11 +21,12 @@ This file will discuss about how different UAV drones rely on the measurement of
 
 
 ### - How UAV  finds its target position ?
-- Conventional UAV mostly rely on predetermined path to reach its goal which ends up being energy inefficient because of the unnecessary path it takes to reach its target and sometimes it missies the target because of lack of localization. Advance UAV integrates the radar sensor data to reach it’s target. However due  to lack of precision it often ends up getting collided into obstacles and formation errors as well.	 
+- Conventional UAV mostly rely on predetermined path to reach its goal which ends up being energy inefficient because of the unnecessary path it takes to reach its target and sometimes it missies the target because of lack of localization. Advance UAV integrates the radar sensor data to reach it’s target. UAVs find their targets using radar by transmitting electromagnetic waves that bounce off objects, allowing the system to detect and identify the target based on the reflected signals . However due  to lack of precision it often ends up getting collided into obstacles and causes formation errors as well.	 
 
 
 ## Swarm Metrics 
 
 ### -  How does swarm metrics measure the effects of radar uncertainty ? 
-- Swarm metrics measure the effects of radar uncertainty by incorporating point uncertainty in radar SLAM systems, which enhances the accuracy and robustness of radar-based navigation
+- Swarm metrics measure the effects of radar uncertainty by incorporating point uncertainty in radar SLAM systems, which enhances the accuracy and robustness of radar-based navigation. This approach models the uncertainty of radar points and uses probabilistic data association to improve performance in challenging conditions.
+
 
