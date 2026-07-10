@@ -41,14 +41,6 @@
     "avoidance_gain": 6.0,
     "tangential_gain": 4.0
   },
-  "radar": {
-    "range_noise_std": 0.3,
-    "bearing_noise_std": 0.0349066,
-    "radial_velocity_noise_std": 0.1,
-    "radar_detection_probability": 0.95,
-    "radar_false_alarm_probability": 0.05,
-    "radar_clutter_density": 0.5
-  },
   "perception_errors": {
     "false_positive_rate": 0.0,
     "false_negative_rate": 0.0,
@@ -59,6 +51,21 @@
     "confidence_error_level": 0.0,
     "fusion_mode": "no_fusion"
   },
+  "radar": {
+    "radar_max_range": 15.0,
+    "radar_min_range": 0.0,
+    "radar_field_of_view": 360.0,
+    "radar_update_rate": 5.0,
+    "radar_detection_probability": 1.0,
+    "radar_false_alarm_probability": 0.0,
+    "radar_clutter_density": 0.0,
+    "radar_range_noise_std": 0.3,
+    "radar_bearing_noise_std": 0.0349,
+    "radar_radial_velocity_noise_std": 0.1,
+    "radar_latency_steps": 0,
+    "radar_dropout_probability": 0.0,
+    "radar_confidence_error": 0.0
+  },
   "scenarios": {
     "baseline": {
       "description": "No perception error, no fusion. Reference case every other scenario is compared against.",
@@ -68,7 +75,20 @@
       "latency_steps": 0,
       "dropout_prob": 0.0,
       "confidence_error_level": 0.0,
-      "fusion_mode": "no_fusion"
+      "fusion_mode": "no_fusion",
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0349,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0
     },
     "false_positive": {
       "description": "Phantom (ghost) detections only.",
