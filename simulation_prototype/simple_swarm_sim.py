@@ -320,6 +320,25 @@ class Simulation:
             }
             dets[:] = [d for d in dets if d.get("id") != "obstacle_0"] + [fused_det]
 
+    def _inject_external_estimates(self, raw_percepts, external_estimates):
+        """Replaces each UAV's own obstacle_0 detection with an externally
+        supplied estimate (radar_track_model + fusion_model output), the
+        same way _apply_fusion replaces it with its own fused_det - just
+        sourced from track fusion instead of per-detection fusion."""
+        ox, oy, orad = self.obstacle
+        for i, dets in raw_percepts.items():
+            est = external_estimates.get(i)
+            if est is None:
+                continue
+            fx, fy = est["x"], est["y"]
+            d_fused = max(dist(self.pos[i], (fx, fy)) - orad, 0.0)
+            fused_det = {
+                "kind": "obstacle", "id": "obstacle_0", "x": fx, "y": fy,
+                "distance": d_fused, "confidence": est.get("confidence", 0.5),
+                "is_fused": True, "fusion_contributors": est.get("num_sources", 1),
+            }
+            dets[:] = [d for d in dets if d.get("id") != "obstacle_0"] + [fused_det]
+
     def _steer(self, i, perceived):
         tgt = self.targets[i]
         gx, gy = normalize(tgt[0] - self.pos[i][0], tgt[1] - self.pos[i][1])
@@ -371,12 +390,13 @@ class Simulation:
             del buf[: used_idx + 1]
         return used if used is not None else []
 
-    def step(self, t):
-        new_pos = [list(p) for p in self.pos]
-        formation_dists = []
-        step_info = [None] * self.num_uavs  # per-UAV data needed for logging, filled in below
-
-        # --- Phase 1: each active UAV's own (uncorrupted-by-fusion) perception ---
+    def sense(self, t):
+        """Phase 1: each active UAV's own (uncorrupted-by-fusion) perception.
+        Split out from step() so a caller (run_radar_track_fusion_pipeline)
+        can run radar tracking/fusion on the raw per-UAV detections before
+        decide_move() consumes them. Returns (true_dets_all, raw_percepts),
+        both dicts keyed by uav id, covering only active (not-yet-arrived)
+        UAVs."""
         active = [i for i in range(self.num_uavs) if not self.reached_goal[i]]
         true_dets_all = {}
         raw_percepts = {}
@@ -387,9 +407,28 @@ class Simulation:
             for d in raw_percepts[i]:
                 if "true_confidence" in d:
                     self.confidence_error_samples.append(abs(d["confidence"] - d["true_confidence"]))
+        return true_dets_all, raw_percepts
+
+    def decide_move(self, t, true_dets_all, raw_percepts, external_estimates=None):
+        """Phases 2-3: fusion, steering, movement, collision/metric
+        bookkeeping and logging, given the (true_dets_all, raw_percepts)
+        produced by sense(t).
+
+        external_estimates: optional {uav_id: {"x", "y", "confidence",
+        "num_sources"}} obstacle position estimate to feed into that UAV's
+        decision-making INSTEAD OF the built-in per-detection
+        _apply_fusion (used by run_radar_track_fusion_pipeline() to hand
+        off a radar_track_model + fusion_model track-fused estimate
+        instead). None (the default) preserves the original behavior."""
+        new_pos = [list(p) for p in self.pos]
+        formation_dists = []
+        step_info = [None] * self.num_uavs  # per-UAV data needed for logging, filled in below
 
         # --- Phase 2: cross-UAV sensor fusion of the obstacle detection ---
-        self._apply_fusion(raw_percepts)
+        if external_estimates is not None:
+            self._inject_external_estimates(raw_percepts, external_estimates)
+        else:
+            self._apply_fusion(raw_percepts)
 
         # --- Phase 3: latency buffering, steering, logging ---
         for i in range(self.num_uavs):
@@ -535,6 +574,12 @@ class Simulation:
                 obstacle_dist_info[i], mission_completed,
             ))
 
+    def step(self, t, external_estimates=None):
+        """Advances the sim by one step (sense() + decide_move() combined).
+        See decide_move() for what external_estimates does."""
+        true_dets_all, raw_percepts = self.sense(t)
+        self.decide_move(t, true_dets_all, raw_percepts, external_estimates)
+
     def _log_row(self, t, i, info, nearest, nearest_uav_dist, obstacle_dist, mission_completed):
         perceived = info["perceived"]
         perceived_obstacle = info["perceived_obstacle"]
@@ -623,12 +668,230 @@ class Simulation:
         }
 
 
+def _generate_vision_lidar_detections(uav_id, t, sim):
+    """Extension point for pipeline step 6 ("optionally generate
+    vision-like/LiDAR-like detections"). No vision or LiDAR sensor model
+    exists in this project - fusion_model.py fuses radar tracks only, and
+    stays that way. This always returns [] on purpose; a future vision/
+    LiDAR model would return detections shaped like Perception.process()'s
+    output ({"id", "x", "y", "confidence", ...}) to be tracked/fused
+    alongside the radar detections below."""
+    return []
+
+
+def run_radar_track_fusion_pipeline(config, scenario_name):
+    """Drives one scenario through the full pipeline (Task 11): true
+    state -> radar detections (P_D/P_FA/clutter/noise/latency/dropout,
+    all via radar_like_model.py) -> per-radar tracks
+    (radar_track_model.py) -> optional vision/LiDAR detections (no-op,
+    see above) -> cross-UAV track fusion (fusion_model.py) -> UAV
+    decision + movement -> metrics -> logs, run per step instead of as
+    three separate batch passes so the fused estimate can be handed back
+    to decision-making.
+
+    ponytail: the fused estimate a UAV steers on is one step (dt) stale -
+    built from step t's tracks, applied starting at step t+1. That's the
+    same one-tick-lag shape latency_steps already models elsewhere in
+    this project. Genuine same-tick feedback would need the tracker
+    threaded into the middle of a single step with no coast/gate slack,
+    which RadarTracker isn't built for; splitting Simulation's decide/move
+    phase further is the upgrade path if zero-lag fusion feedback is ever
+    required. Ground truth is never used for decisions either way - see
+    the sense()/decide_move() split and _inject_external_estimates().
+
+    Returns (rows, metrics): rows is a list of dicts matching the Task 12
+    CSV schema (one row per active UAV per step); metrics is the same
+    summary dict Simulation.run() returns.
+    """
+    from radar_like_model import RadarLikeModel, _range_bearing_radial
+    from radar_track_model import RadarTracker
+    from fusion_model import fuse_step
+
+    model = RadarLikeModel(config, scenario_name)
+    sim = model.sim
+    dt = sim.dt
+    fusion_mode = sim.fusion_mode
+
+    trackers = {i: RadarTracker(i) for i in range(sim.num_uavs)}
+    obstacle_track_id = {}   # uav_id -> track_id currently believed to be the obstacle
+    pending_estimates = {}   # last step's fused_by_uav, applied to this step's decision
+    rows = []
+
+    t = 0
+    for t in range(sim.max_steps):
+        if all(sim.reached_goal):
+            break
+
+        model._capture = {}
+        model._current_t = t
+        pos_before = {i: tuple(sim.pos[i]) for i in range(sim.num_uavs)}
+
+        # 1-5: true state update + radar detections, already carrying
+        # P_D/P_FA/clutter/noise/confidence-error/update-rate/latency/
+        # dropout (all applied inside the patched Perception.process
+        # radar_like_model installs on construction).
+        true_dets_all, raw_percepts = sim.sense(t)
+        active_this_step = list(raw_percepts.keys())
+
+        # 6: optional vision-like/LiDAR-like detections (no-op today).
+        for i in active_this_step:
+            raw_percepts[i] = raw_percepts[i] + _generate_vision_lidar_detections(i, t, sim)
+
+        # Snapshot the raw per-radar detections now, before decide_move()
+        # (below) overwrites raw_percepts in place with the fused
+        # estimate - the tracker must only ever see genuine sensor
+        # output, never its own previous fused output.
+        raw_snapshot = {i: [dict(d) for d in raw_percepts[i]] for i in active_this_step}
+
+        # 6 (track model): per-radar nearest-neighbor tracking.
+        obstacle_track_row_by_uav = {}
+        for i in active_this_step:
+            dets_for_tracker = [{"x": d["x"], "y": d["y"], "confidence": d.get("confidence")}
+                                 for d in raw_snapshot[i]]
+            track_rows = trackers[i].update(t, dets_for_tracker, dt)
+
+            obstacle_det = next((d for d in raw_snapshot[i] if d.get("id") == "obstacle_0"), None)
+            if obstacle_det is not None and track_rows:
+                match = min(track_rows, key=lambda r: math.hypot(
+                    r["est_x"] - obstacle_det["x"], r["est_y"] - obstacle_det["y"]))
+                obstacle_track_id[i] = match["track_id"]
+            # else: keep whatever track id was last associated with the
+            # obstacle for this radar, if it's still alive (coasting
+            # through a miss) - checked just below.
+
+            obs_row = next((r for r in track_rows if r["track_id"] == obstacle_track_id.get(i)), None)
+            if obs_row is None:
+                obstacle_track_id.pop(i, None)
+            else:
+                obstacle_track_row_by_uav[i] = obs_row
+
+        # 7: fuse this step's obstacle tracks across UAVs.
+        fused_clusters = fuse_step(list(obstacle_track_row_by_uav.values()), fusion_mode)
+        track_id_to_uav = {tid: uav for uav, tid in obstacle_track_id.items()}
+        fused_by_uav = {}
+        for cluster in fused_clusters:
+            for tid in cluster["source_ids"]:
+                uav = track_id_to_uav.get(tid)
+                if uav is not None:
+                    fused_by_uav[uav] = cluster
+
+        # 8-9: hand last step's fused estimate to decision-making, move,
+        # then hand this step's estimate off for next step.
+        sim.decide_move(t, true_dets_all, raw_percepts, external_estimates=pending_estimates)
+        pending_estimates = {i: {"x": c["x"], "y": c["y"], "confidence": c["confidence"],
+                                  "num_sources": c["num_sources"]} for i, c in fused_by_uav.items()}
+        this_step_logs = sim.log_rows[-sim.num_uavs:]
+        formation_error_this_step = sim.formation_error_samples[-1] if sim.formation_error_samples else None
+
+        # 10-11: metrics + one combined log row per sensing UAV. Parked
+        # UAVs (already at their goal) don't get a row this step, since
+        # sense() doesn't run their radar either.
+        for i in active_this_step:
+            pos_now = sim.pos[i]
+            observer_vel = ((pos_now[0] - pos_before[i][0]) / dt, (pos_now[1] - pos_before[i][1]) / dt)
+
+            ox, oy, _ = sim.obstacle
+            true_range, true_bearing, true_radial_velocity = _range_bearing_radial(
+                pos_before[i], observer_vel, (ox, oy), (0.0, 0.0))
+
+            obstacle_det = next((d for d in raw_snapshot[i] if d.get("id") == "obstacle_0"), None)
+            if obstacle_det is not None:
+                detected_x, detected_y = obstacle_det["x"], obstacle_det["y"]
+                measured_range = obstacle_det.get("measured_range")
+                measured_bearing = obstacle_det.get("measured_bearing")
+                radar_confidence = obstacle_det.get("confidence")
+                _, _, base_radial = _range_bearing_radial(
+                    pos_before[i], observer_vel, (detected_x, detected_y), (0.0, 0.0))
+                measured_radial_velocity = (
+                    round(base_radial + model.radar_rng.gauss(0.0, model.radial_velocity_noise_std), 4)
+                    if base_radial is not None else None)
+            else:
+                detected_x = detected_y = measured_range = measured_bearing = None
+                measured_radial_velocity = radar_confidence = None
+
+            # ponytail: simplified distance-based SNR proxy (falls off with
+            # range relative to radar_max_range), not a full radar-equation
+            # SNR model - there's no RCS/power/noise-floor model here to
+            # derive a physical SNR from.
+            range_for_snr = measured_range if measured_range is not None else true_range
+            radar_snr = (round(clamp(20 * math.log10(model.radar_max_range / max(range_for_snr, 0.05)),
+                                      0.0, 60.0), 2)
+                         if range_for_snr else None)
+
+            obstacle_in_range = any(d["id"] == "obstacle_0" for d in true_dets_all.get(i, []))
+            obs_track_row = obstacle_track_row_by_uav.get(i)
+            fused = fused_by_uav.get(i)
+            log_row = this_step_logs[i]
+            nearest_dist = log_row["nearest_entity_distance"]
+
+            rows.append({
+                "time_step": t,
+                "uav_id": i,
+                "uav_x": round(pos_now[0], 4),
+                "uav_y": round(pos_now[1], 4),
+                "true_target_x": round(ox, 4),
+                "true_target_y": round(oy, 4),
+                "true_target_vx": 0.0,
+                "true_target_vy": 0.0,
+                "radar_id": i,
+                "true_range": round(true_range, 4) if true_range is not None else None,
+                "true_bearing": round(true_bearing, 5) if true_bearing is not None else None,
+                "true_radial_velocity": round(true_radial_velocity, 4) if true_radial_velocity is not None else None,
+                "measured_range": round(measured_range, 4) if measured_range is not None else None,
+                "measured_bearing": round(measured_bearing, 5) if measured_bearing is not None else None,
+                "measured_radial_velocity": measured_radial_velocity,
+                "detected_x": round(detected_x, 4) if detected_x is not None else None,
+                "detected_y": round(detected_y, 4) if detected_y is not None else None,
+                "radar_confidence": radar_confidence,
+                "radar_snr": radar_snr,
+                "radar_track_id": obs_track_row["track_id"] if obs_track_row else None,
+                "track_status": obs_track_row["status"] if obs_track_row else None,
+                "false_alarm_flag": any(d.get("id") == "phantom" or d.get("is_radar_clutter")
+                                         for d in raw_snapshot[i]),
+                "missed_detection_flag": bool(obstacle_in_range and obstacle_det is None),
+                "clutter_flag": any(d.get("is_radar_clutter") for d in raw_snapshot[i]),
+                "dropout_flag": bool(model._held_dropout.get(i, False) or sim.perception[i].last_dropout),
+                "latency_steps": model.radar_latency_steps,
+                "fusion_mode": fusion_mode,
+                "fused_x": round(fused["x"], 4) if fused else None,
+                "fused_y": round(fused["y"], 4) if fused else None,
+                "action_taken": log_row["action_taken"],
+                "collision_risk_flag": bool(nearest_dist <= sim.collision_distance),
+                "near_miss_flag": bool(sim.collision_distance < nearest_dist <= sim.near_miss_distance),
+                "unnecessary_avoidance_flag": bool(log_row["unnecessary_avoidance_flag"]),
+                "missed_response_flag": bool(log_row["missed_response_flag"]),
+                "mission_success_flag": bool(log_row["mission_completed_flag"]),
+                "formation_error": (round(formation_error_this_step, 4)
+                                    if formation_error_this_step is not None else None),
+            })
+
+    metrics = sim._metrics(t)
+    return rows, metrics
+
+
 def main():
-    parser = argparse.ArgumentParser(description="2D UAV swarm perception-error simulation")
+    parser = argparse.ArgumentParser(
+        description="2D UAV swarm simulation. Default mode (Task 11) runs the full "
+                     "radar -> track -> fusion -> decision pipeline: the UAV never "
+                     "sees ground truth, only radar-detected/fused position estimates.")
     parser.add_argument("--config", default="simulation_config.json")
     parser.add_argument("--scenario", default=None, help="Run just one scenario instead of all")
-    parser.add_argument("--log", default="logs/simulation_log.csv")
+    parser.add_argument("--log", default=None,
+                         help="Output CSV path. Defaults to logs/full_pipeline_log.csv "
+                              "(or logs/simulation_log.csv with --legacy-pipeline).")
+    parser.add_argument("--legacy-pipeline", action="store_true",
+                         help="Run the OLD perception-only sim (pre-radar milestone, "
+                              "frozen in current_simulation_milestone.md) instead of the "
+                              "radar -> track -> fusion -> decision pipeline. The UAV in "
+                              "this mode uses Perception's false-positive/negative/noise "
+                              "model directly, with no radar sensor model in front of it. "
+                              "Kept only for reproducing/comparing against the pre-radar "
+                              "baseline; not the default because it no longer reflects how "
+                              "the project's UAVs are meant to sense the world.")
     args = parser.parse_args()
+
+    if args.log is None:
+        args.log = "logs/simulation_log.csv" if args.legacy_pipeline else "logs/full_pipeline_log.csv"
 
     with open(args.config) as f:
         config = json.load(f)
@@ -637,9 +900,13 @@ def main():
 
     all_rows = []
     for name in scenario_names:
-        sim = Simulation(config, name)
-        metrics = sim.run()
-        all_rows.extend(sim.log_rows)
+        if args.legacy_pipeline:
+            sim = Simulation(config, name)
+            metrics = sim.run()
+            rows = sim.log_rows
+        else:
+            rows, metrics = run_radar_track_fusion_pipeline(config, name)
+        all_rows.extend(rows)
         print(json.dumps(metrics, indent=2))
 
     if all_rows:
