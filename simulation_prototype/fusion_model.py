@@ -23,6 +23,43 @@ refer to the *same* real-world object. That's done with the same
 nearest-neighbor idea radar_track_model.py already uses for
 detection-to-track association, one level up: track-to-track.
 
+Fusion architectures
+--------------------
+Independent of *which weighting scheme* combines tracks (the fusion modes
+below), there are two different answers to *where* that combining happens
+and *how the tracks get there* - this is the "architecture" axis:
+
+  - "centralized" - every UAV's track is sent to one central fusion node
+                    (e.g. a ground station or a designated lead UAV). That
+                    node runs the clustering + fuse_group math once and
+                    produces a single final world estimate per object,
+                    which is then broadcast back out to the swarm. One
+                    shared answer, but it costs an uplink message per UAV
+                    plus a downlink broadcast, and nothing is usable until
+                    that round trip completes (see fuse_centralized).
+                    This is what fuse_step already did before this
+                    architecture axis existed, so "centralized" is the
+                    default and reproduces the old behavior exactly.
+  - "distributed"  - there is no central node. Each UAV keeps its own
+                      local track(s), broadcasts a lightweight summary of
+                      them to the rest of the swarm, and separately
+                      receives whatever summaries the others managed to
+                      get to it this step (each peer-to-peer broadcast can
+                      independently fail - see COMM_DROP_PROBABILITY).
+                      Each UAV then runs its *own* local clustering +
+                      fuse_group pass over only what it currently has on
+                      hand (its own track plus whatever peer summaries
+                      arrived). Because delivery isn't guaranteed to be
+                      identical for every UAV, different UAVs can end up
+                      with slightly different local estimates of the same
+                      object in the same step (see fuse_distributed).
+
+Both architectures reuse the exact same clustering (_cluster) and
+weighting (fuse_group) math - the fusion *mode* (naive/confidence/trust/
+covariance/CI) still decides how sources combine once they're gathered.
+The architecture only decides who gathers what, and what that gathering
+costs in messages and delay.
+
 Fusion modes
 ------------
   1. "no_fusion"                      - each UAV's own track stands alone,
@@ -130,6 +167,34 @@ FUSION_MODES = (
     COVARIANCE_WEIGHTED_FUSION,
     COVARIANCE_INTERSECTION_FUSION,
 )
+
+# --- fusion architectures --------------------------------------------------
+ARCHITECTURE_CENTRALIZED = "centralized"
+ARCHITECTURE_DISTRIBUTED = "distributed"
+ARCHITECTURES = (ARCHITECTURE_CENTRALIZED, ARCHITECTURE_DISTRIBUTED)
+
+# --- communication-model tuning constants ----------------------------------
+# These model the messaging cost/delay of *getting tracks to wherever they
+# get fused*, on top of (and separate from) each source's own sensor
+# latency. All defaults are overridable per call / via a config
+# "communication" block (see build_fused_log).
+
+# Centralized: one step to move each UAV's track uplink to the central
+# node, one step to broadcast the fused result back down. Nothing is
+# usable by a UAV until both legs complete.
+CENTRAL_UPLINK_LATENCY_STEPS = 1
+CENTRAL_DOWNLINK_LATENCY_STEPS = 1
+
+# Distributed: one step for a single peer-to-peer broadcast hop (no
+# central relay, so no round trip - just the one hop).
+DISTRIBUTED_HOP_LATENCY_STEPS = 1
+
+# Distributed: probability that any single UAV-to-UAV broadcast this step
+# is lost (independently per ordered pair, per step). 0.0 = perfectly
+# reliable mesh; centralized has no equivalent knob today (its single
+# uplink/downlink legs are assumed reliable, since a dropped central
+# report is already covered by each source's own sensor_dropout_probability).
+COMM_DROP_PROBABILITY = 0.0
 
 # How close two UAVs' tracks have to be to be treated as the same
 # real-world object. Same spirit as radar_track_model.GATE_DISTANCE.
@@ -380,33 +445,19 @@ def fuse_group(group, fusion_mode):
     return result
 
 
-def fuse_step(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANCE,
-              sensor_latency_steps=0, sensor_dropout_probability=0.0):
-    """Fuses one time step's worth of radar tracks - one list across all of
-    the swarm's UAVs, already sensor output, never ground truth - into
-    per-object fused estimates.
-
-    sensor_latency_steps / sensor_dropout_probability are static,
-    config-known sensor characteristics (not per-track data); callers that
-    have them on hand (build_fused_log below) pass them through so the
-    reliability model can account for latency and baseline dropout risk.
-    Callers that don't (e.g. simple_swarm_sim.py's live pipeline) simply
-    omit them and get the neutral defaults - measurement age, status, and
-    covariance already carry most of the useful signal on their own.
-    """
-    if fusion_mode not in FUSION_MODES:
-        raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
-
-    sources = [_as_source(t, sensor_latency_steps, sensor_dropout_probability)
-               for t in radar_tracks]
-
+def _fuse_sources(sources, fusion_mode, cluster_distance):
+    """Core gather-then-fuse step, shared by both architectures: given
+    whatever sources one fusion point currently has on hand (all of them,
+    for centralized; one UAV's own view, for distributed), cluster the
+    ones that likely refer to the same object and fuse each cluster.
+    Contains no notion of *how* those sources got here - that's each
+    architecture's job."""
     if not sources:
         return []
 
     if fusion_mode == NO_FUSION:
-        # Nothing gets combined across UAVs - every UAV's track stands on
-        # its own, exactly what "no_fusion" scenarios elsewhere in this
-        # project mean.
+        # Nothing gets combined - every source stands on its own, exactly
+        # what "no_fusion" scenarios elsewhere in this project mean.
         return [{"x": s["x"], "y": s["y"], "confidence": s["confidence"],
                  "num_sources": 1, "source_ids": [s["source_id"]],
                  "position_variance": round(float(np.trace(s["covariance"])), 4)}
@@ -416,10 +467,150 @@ def fuse_step(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANCE,
     return [fuse_group(g, fusion_mode) for g in clusters]
 
 
-def build_fused_log(scenario_name, config):
+def fuse_centralized(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANCE,
+                      sensor_latency_steps=0, sensor_dropout_probability=0.0,
+                      uplink_latency_steps=CENTRAL_UPLINK_LATENCY_STEPS,
+                      downlink_latency_steps=CENTRAL_DOWNLINK_LATENCY_STEPS):
+    """Centralized architecture: every UAV's track is treated as already
+    having arrived at one central fusion node (that's what building
+    `radar_tracks` as a single pooled list already represents), fused
+    once into a single per-object world estimate, then annotated with
+    what that round trip actually costs:
+
+      - comm_messages     - one uplink message per contributing UAV, plus
+                             one downlink broadcast back out to the swarm
+                             (so len(radar_tracks) + 1, not len(radar_tracks)
+                             per UAV - a single broadcast reaches everyone).
+      - response_time_steps - uplink + downlink legs, on top of whatever
+                             latency each source's own sensor already has
+                             (the max across sources, since the center
+                             can't finish until its slowest input arrives).
+
+    Returns one row per fused object (same shape fuse_step always
+    returned), each carrying architecture/comm/response_time fields.
+    """
+    if fusion_mode not in FUSION_MODES:
+        raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
+
+    sources = [_as_source(t, sensor_latency_steps, sensor_dropout_probability)
+               for t in radar_tracks]
+    fused = _fuse_sources(sources, fusion_mode, cluster_distance)
+
+    num_uavs_reporting = len(sources)
+    comm_messages = num_uavs_reporting + (1 if num_uavs_reporting else 0)  # uplinks + one broadcast
+    slowest_source_latency = max((s["sensor_latency_steps"] for s in sources), default=0)
+    response_time_steps = slowest_source_latency + uplink_latency_steps + downlink_latency_steps
+
+    for row in fused:
+        row["architecture"] = ARCHITECTURE_CENTRALIZED
+        row["local_uav_id"] = None  # one shared answer, not UAV-specific
+        row["comm_messages"] = comm_messages
+        row["response_time_steps"] = response_time_steps
+    return fused
+
+
+def fuse_distributed(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANCE,
+                      sensor_latency_steps=0, sensor_dropout_probability=0.0,
+                      comm_drop_probability=COMM_DROP_PROBABILITY,
+                      hop_latency_steps=DISTRIBUTED_HOP_LATENCY_STEPS,
+                      rng=None):
+    """Distributed architecture: no central node. Every UAV that produced
+    a track broadcasts it to every other UAV; each such broadcast is an
+    independent peer-to-peer message that can be lost with probability
+    comm_drop_probability. Each UAV then fuses *its own* track together
+    with whatever peers' tracks actually arrived - so different UAVs can
+    end up with different local estimates of the same object this step.
+
+    Returns one row per (uav_id, fused object) - i.e. potentially several
+    rows per object, one per UAV's local view of it - each carrying
+    architecture/comm/response_time fields plus which UAV it's the local
+    view for.
+    """
+    if fusion_mode not in FUSION_MODES:
+        raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
+
+    rng = rng or np.random.default_rng()
+    all_sources = [_as_source(t, sensor_latency_steps, sensor_dropout_probability)
+                   for t in radar_tracks]
+    if not all_sources:
+        return []
+
+    receivers = sorted({s["radar_id"] for s in all_sources})
+    n = len(receivers)
+    # Attempted messages: every UAV broadcasts its own track to every
+    # *other* UAV - this is the communication load whether or not each
+    # individual broadcast is actually delivered.
+    attempted_messages = n * (n - 1)
+    delivered_messages = 0
+
+    fused_rows = []
+    for receiver_id in receivers:
+        own = [s for s in all_sources if s["radar_id"] == receiver_id]
+        received_from_peers = []
+        for s in all_sources:
+            if s["radar_id"] == receiver_id:
+                continue
+            if rng.random() >= comm_drop_probability:  # broadcast survives
+                received_from_peers.append(s)
+                delivered_messages += 1
+        local_sources = own + received_from_peers
+        for row in _fuse_sources(local_sources, fusion_mode, cluster_distance):
+            row["architecture"] = ARCHITECTURE_DISTRIBUTED
+            row["local_uav_id"] = receiver_id
+            row["comm_messages"] = attempted_messages
+            row["response_time_steps"] = sensor_latency_steps + hop_latency_steps
+            fused_rows.append(row)
+
+    for row in fused_rows:
+        row["comm_messages_delivered"] = delivered_messages
+    return fused_rows
+
+
+def fuse_step(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANCE,
+              sensor_latency_steps=0, sensor_dropout_probability=0.0,
+              architecture=ARCHITECTURE_CENTRALIZED, **architecture_kwargs):
+    """Fuses one time step's worth of radar tracks - one list across all of
+    the swarm's UAVs, already sensor output, never ground truth - into
+    per-object fused estimates, using whichever `architecture` decides how
+    those tracks get gathered (see the module docstring's "Fusion
+    architectures" section).
+
+    sensor_latency_steps / sensor_dropout_probability are static,
+    config-known sensor characteristics (not per-track data); callers that
+    have them on hand (build_fused_log below) pass them through so the
+    reliability model can account for latency and baseline dropout risk.
+    Callers that don't (e.g. simple_swarm_sim.py's live pipeline) simply
+    omit them and get the neutral defaults - measurement age, status, and
+    covariance already carry most of the useful signal on their own.
+
+    Defaults to "centralized", which reproduces this function's exact
+    pre-architecture behavior (one row per object, no architecture/comm
+    fields consumers didn't already expect) for every existing caller.
+    """
+    if architecture not in ARCHITECTURES:
+        raise ValueError(f"Unknown architecture: {architecture!r} (expected one of {ARCHITECTURES})")
+
+    if architecture == ARCHITECTURE_CENTRALIZED:
+        return fuse_centralized(radar_tracks, fusion_mode, cluster_distance,
+                                 sensor_latency_steps, sensor_dropout_probability,
+                                 **architecture_kwargs)
+    return fuse_distributed(radar_tracks, fusion_mode, cluster_distance,
+                             sensor_latency_steps, sensor_dropout_probability,
+                             **architecture_kwargs)
+
+
+def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED, seed=None):
     """Runs the radar model + tracker for one scenario, then fuses each
-    step's tracks across all UAVs. Returns the list of fused-estimate rows
-    for that scenario (one row per fused object per step)."""
+    step's tracks across all UAVs using the given fusion architecture.
+    Returns the list of fused-estimate rows for that scenario - one row
+    per fused object per step for "centralized", or one row per
+    (uav_id, fused object) per step for "distributed" (see fuse_step /
+    fuse_distributed).
+
+    `seed` seeds the distributed architecture's communication-drop RNG so
+    runs are reproducible; ignored for "centralized" (which has no random
+    communication model today).
+    """
     model = RadarLikeModel(config, scenario_name)
     detection_rows = model.run()
     dt = config["sim"]["dt"]
@@ -427,6 +618,20 @@ def build_fused_log(scenario_name, config):
 
     fusion_mode = model.sim.scn.get(
         "fusion_mode", config.get("perception_errors", {}).get("fusion_mode", NO_FUSION))
+
+    comm_cfg = config.get("communication", {})
+    architecture_kwargs = {}
+    if architecture == ARCHITECTURE_CENTRALIZED:
+        architecture_kwargs["uplink_latency_steps"] = comm_cfg.get(
+            "central_uplink_latency_steps", CENTRAL_UPLINK_LATENCY_STEPS)
+        architecture_kwargs["downlink_latency_steps"] = comm_cfg.get(
+            "central_downlink_latency_steps", CENTRAL_DOWNLINK_LATENCY_STEPS)
+    else:
+        architecture_kwargs["comm_drop_probability"] = comm_cfg.get(
+            "comm_drop_probability", COMM_DROP_PROBABILITY)
+        architecture_kwargs["hop_latency_steps"] = comm_cfg.get(
+            "distributed_hop_latency_steps", DISTRIBUTED_HOP_LATENCY_STEPS)
+        architecture_kwargs["rng"] = np.random.default_rng(seed)
 
     by_step = {}
     for row in track_rows:
@@ -436,19 +641,51 @@ def build_fused_log(scenario_name, config):
     for step in sorted(by_step):
         for f in fuse_step(by_step[step], fusion_mode,
                             sensor_latency_steps=model.radar_latency_steps,
-                            sensor_dropout_probability=model.radar_dropout_probability):
+                            sensor_dropout_probability=model.radar_dropout_probability,
+                            architecture=architecture, **architecture_kwargs):
             fused_rows.append({
                 "scenario": scenario_name,
                 "time_step": step,
                 "fusion_mode": fusion_mode,
+                "architecture": f["architecture"],
+                "local_uav_id": f["local_uav_id"],
                 "fused_x": round(f["x"], 4),
                 "fused_y": round(f["y"], 4),
                 "fused_confidence": round(f["confidence"], 4),
                 "num_sources": f["num_sources"],
                 "position_variance": f.get("position_variance"),
+                "comm_messages": f.get("comm_messages"),
+                "comm_messages_delivered": f.get("comm_messages_delivered"),
+                "response_time_steps": f.get("response_time_steps"),
                 "source_track_ids": ";".join(f["source_ids"]),
             })
     return fused_rows
+
+
+def estimation_error_against_ground_truth(fused_rows, ground_truth_xy):
+    """Evaluation-only helper (never used by fusion itself - see the
+    module docstring): given fused rows and a known ground-truth (x, y)
+    for the object they estimate, returns the mean and max Euclidean
+    error. This is exactly the kind of "check afterwards" use of ground
+    truth metrics_analysis.py / simulation_visualizer.py already do;
+    fuse_group/fuse_step never see or use it.
+
+    For "distributed" rows (one row per UAV per step), this naturally
+    averages over every UAV's local estimate too, not just over time -
+    which is the point: it lets per-UAV disagreement show up as error,
+    not just get hidden by averaging away.
+    """
+    if not fused_rows:
+        return {"mean_error": None, "max_error": None, "n": 0}
+    gx, gy = ground_truth_xy
+    def _xy(r):
+        return (r["fused_x"], r["fused_y"]) if "fused_x" in r else (r["x"], r["y"])
+    errors = [math.hypot(*(v - g for v, g in zip(_xy(r), (gx, gy)))) for r in fused_rows]
+    return {
+        "mean_error": round(sum(errors) / len(errors), 4),
+        "max_error": round(max(errors), 4),
+        "n": len(errors),
+    }
 
 
 def main():
@@ -458,6 +695,14 @@ def main():
     parser.add_argument("--scenario", default=None, help="Run just one scenario instead of all")
     parser.add_argument("--fusion-mode", default=None, choices=FUSION_MODES,
                          help="Override the scenario's configured fusion_mode")
+    parser.add_argument("--architecture", default=ARCHITECTURE_CENTRALIZED, choices=ARCHITECTURES,
+                         help="Where fusion happens: one central node, or each UAV locally")
+    parser.add_argument("--compare-architectures", action="store_true",
+                         help="Ignore --architecture and instead run every scenario once under "
+                              "each architecture, writing both into --log with an 'architecture' "
+                              "column so they can be compared directly")
+    parser.add_argument("--seed", type=int, default=None,
+                         help="Seeds the distributed architecture's communication-drop RNG")
     parser.add_argument("--log", default="logs/fused_track_log.csv")
     args = parser.parse_args()
 
@@ -469,12 +714,14 @@ def main():
             scn["fusion_mode"] = args.fusion_mode
 
     scenario_names = [args.scenario] if args.scenario else list(config["scenarios"].keys())
+    architectures = list(ARCHITECTURES) if args.compare_architectures else [args.architecture]
 
     all_rows = []
     for name in scenario_names:
-        rows = build_fused_log(name, config)
-        all_rows.extend(rows)
-        print(f"{name}: {len(rows)} fused rows")
+        for architecture in architectures:
+            rows = build_fused_log(name, config, architecture=architecture, seed=args.seed)
+            all_rows.extend(rows)
+            print(f"{name} [{architecture}]: {len(rows)} fused rows")
 
     if all_rows:
         import os
