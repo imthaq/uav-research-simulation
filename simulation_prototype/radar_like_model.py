@@ -55,9 +55,12 @@ Radar false alarms / clutter (Task 6)
 --------------------------------------
 Independently of the existing config-driven false_positive_rate ("phantom")
 mechanism, this module also generates radar clutter every step via
-_generate_clutter(): a Poisson-distributed number of clutter "candidate
-returns" (rate = radar_clutter_density) are drawn inside the radar's
-sensing disk, and each candidate is confirmed as a reported false detection
+_generate_clutter(): the number of clutter "candidate returns" is drawn
+from clutter_distribution ("poisson", default - rate clutter_lambda; or
+"fixed" - always round(clutter_lambda)), uniformly positioned inside its
+own [clutter_range_min, clutter_range_max] annulus (independent of the
+target-detection radar_min_range/radar_max_range), and each candidate is
+confirmed as a reported false detection
 with probability radar_false_alarm_probability (P_FA). Confirmed clutter
 points get a random range/bearing (and therefore x/y), a confidence score,
 and are flagged false_alarm_flag=True/clutter_flag=True. They are injected
@@ -204,6 +207,7 @@ class RadarLikeModel:
                                                      # reported as a detection
     DEFAULT_RADAR_CLUTTER_DENSITY = 0.5             # mean clutter candidate
                                                      # returns per scan (Poisson rate)
+    DEFAULT_CLUTTER_DISTRIBUTION = "poisson"        # "poisson" or "fixed"
 
     # Task 7: radar sensing limits.
     DEFAULT_MIN_RANGE = 0.0                         # no blind zone
@@ -302,6 +306,26 @@ class RadarLikeModel:
             "radar_min_range", radar_cfg.get("radar_min_range", self.DEFAULT_MIN_RANGE))
         self.radar_field_of_view = scn.get(
             "radar_field_of_view", radar_cfg.get("radar_field_of_view", self.DEFAULT_FIELD_OF_VIEW_DEG))
+
+        # Task 4: probabilistic clutter generation. clutter_lambda is the
+        # mean number of clutter candidates per scan (falls back to the
+        # older radar_clutter_density key so existing configs/Task 2's PFA
+        # clutter_factor keep working unchanged). clutter_distribution picks
+        # how that count is drawn: "poisson" (recommended - a real varying
+        # clutter count) or "fixed" (always round(clutter_lambda), for A/B
+        # comparison against the old behavior). clutter_range_min/max give
+        # clutter its own annulus, independent of the target-detection
+        # radar_min_range/radar_max_range.
+        self.clutter_lambda = scn.get(
+            "clutter_lambda", radar_cfg.get("clutter_lambda", self.clutter_density))
+        self.clutter_distribution = scn.get(
+            "clutter_distribution", radar_cfg.get("clutter_distribution", self.DEFAULT_CLUTTER_DISTRIBUTION))
+        if self.clutter_distribution not in ("poisson", "fixed"):
+            raise ValueError(f"Unknown clutter_distribution: {self.clutter_distribution!r}")
+        self.clutter_range_min = scn.get(
+            "clutter_range_min", radar_cfg.get("clutter_range_min", self.radar_min_range))
+        self.clutter_range_max = scn.get(
+            "clutter_range_max", radar_cfg.get("clutter_range_max", self.radar_max_range))
 
         default_update_rate = (1.0 / self.dt) if self.dt > 0 else 1.0
         self.radar_update_rate = scn.get(
@@ -440,10 +464,10 @@ class RadarLikeModel:
             0.0, 1.0)
 
         # PFA: base radar_false_alarm_probability, raised by environment/
-        # reliability multipliers and by clutter density (denser clutter
+        # reliability multipliers and by clutter intensity (denser clutter
         # environments produce more confirmable-looking returns per
-        # candidate, on top of Poisson producing more candidates).
-        clutter_factor = 1.0 + (self.clutter_density * env["clutter_mult"]) / 2.0
+        # candidate, on top of clutter_lambda producing more candidates).
+        clutter_factor = 1.0 + (self.clutter_lambda * env["clutter_mult"]) / 2.0
         pfa_effective = clamp(
             self.false_alarm_probability * env["pfa_mult"] * rel["pfa_mult"] * clutter_factor,
             0.0, 1.0)
@@ -577,23 +601,27 @@ class RadarLikeModel:
 
     def _generate_clutter(self, uav_pos, heading=None, half_fov=None):
         """Generates this scan's confirmed radar clutter detections for one
-        UAV, confined to the radar's [radar_min_range, radar_max_range]
+        UAV, confined to its own [clutter_range_min, clutter_range_max]
         annulus and (Task 7) field-of-view sector if one is set. The number
-        of *candidate* clutter returns is drawn from
-        Poisson(radar_clutter_density); each candidate is independently
-        confirmed as a reported false detection with probability
-        radar_false_alarm_probability (P_FA). This runs every step for
-        every scenario - it is not a special demo scenario, it is the
-        radar's ordinary noise floor."""
+        of *candidate* clutter returns is drawn from clutter_distribution
+        ("poisson", default - Poisson(clutter_lambda); or "fixed" - always
+        round(clutter_lambda)); each candidate is independently confirmed
+        as a reported false detection with probability pfa_effective (Task
+        2's range/environment/reliability/clutter-adjusted PFA). This runs
+        every step for every scenario - it is not a special demo scenario,
+        it is the radar's ordinary noise floor."""
         dets = []
-        num_candidates = self._poisson_sample(self.clutter_density)
+        if self.clutter_distribution == "fixed":
+            num_candidates = round(self.clutter_lambda)
+        else:
+            num_candidates = self._poisson_sample(self.clutter_lambda)
         for _ in range(num_candidates):
             # Uniform-in-annulus-area radius sampling so clutter isn't
             # artificially bunched near the inner or outer edge. Sampled
             # before the confirmation roll (Task 2) so PFA can itself be
             # range-dependent, same as PD is for real detections.
-            lo2, hi2 = self.radar_min_range ** 2, self.radar_max_range ** 2
-            rng_ = math.sqrt(self.radar_rng.uniform(lo2, hi2)) if hi2 > lo2 else self.radar_max_range
+            lo2, hi2 = self.clutter_range_min ** 2, self.clutter_range_max ** 2
+            rng_ = math.sqrt(self.radar_rng.uniform(lo2, hi2)) if hi2 > lo2 else self.clutter_range_max
 
             uncertainty = self._measurement_uncertainty(rng_)
 
