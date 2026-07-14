@@ -180,7 +180,79 @@ class Simulation:
 
         w = config["world"]
         shared_target = (w["target"]["x"], w["target"]["y"])
-        self.obstacle = (w["obstacle"]["x"], w["obstacle"]["y"], w["obstacle"]["radius"])
+
+        # --- Multi-entity world state (Task 7: multiple moving targets,
+        # multiple static/moving obstacles, crossing paths, entities
+        # entering/leaving radar coverage, appearance/disappearance) ---
+        #
+        # An "entity" is anything sensed that isn't a UAV: a static
+        # obstacle, a moving obstacle, or a moving target. Each is a plain
+        # dict with a stable id/kind, a position, an optional constant
+        # velocity or waypoint patrol path, and an optional
+        # appear_step/disappear_step window controlling when it exists in
+        # the world at all (distinct from simply being out of sensor
+        # range - a not-yet-appeared or already-disappeared entity is
+        # invisible to every detection mechanism, not just far away).
+        #
+        # Config precedence (scenario-first, matching every other
+        # scenario-overridable value in this project): scenario["entities"]
+        # -> world["entities"] -> a single legacy static obstacle built
+        # from world["obstacle"], so every existing config/scenario that
+        # predates this feature keeps behaving exactly as before.
+        entities_cfg = self.scn.get("entities", w.get("entities"))
+        if entities_cfg is None:
+            entities_cfg = [{
+                "id": "obstacle_0", "kind": "static_obstacle",
+                "x": w["obstacle"]["x"], "y": w["obstacle"]["y"],
+                "radius": w["obstacle"]["radius"],
+            }]
+
+        self.entities = []
+        for idx, e in enumerate(entities_cfg):
+            vel = e.get("velocity", [0.0, 0.0])
+            self.entities.append({
+                "id": e.get("id", f"entity_{idx}"),
+                "kind": e.get("kind", "static_obstacle"),  # static_obstacle | moving_obstacle | moving_target
+                "x": float(e["x"]), "y": float(e["y"]),
+                "radius": float(e.get("radius", 0.0)),
+                "vx": float(vel[0]), "vy": float(vel[1]),
+                # Optional patrol path: a list of [x, y] waypoints the
+                # entity drives toward in order, looping back to the
+                # first once the last is reached. When set, this
+                # overrides the constant vx/vy above (speed still comes
+                # from vx/vy's magnitude, or "speed" if given directly).
+                "waypoints": e.get("waypoints"),
+                "waypoint_idx": 0,
+                "speed": float(e.get("speed", math.hypot(vel[0], vel[1]))),
+                # Steps are in units of sim steps (t), matching
+                # appear_step/disappear_step elsewhere in this project
+                # (e.g. dropout_duration_steps) rather than seconds.
+                "appear_step": int(e.get("appear_step", 0)),
+                "disappear_step": e.get("disappear_step"),  # None = never
+                # Whether a moving entity with no waypoints bounces off
+                # the world bounds (reflecting vx/vy) instead of drifting
+                # off the edge and getting clamped in place.
+                "bounce": bool(e.get("bounce", True)),
+            })
+
+        # self.obstacle stays a backward-compatible (x, y, radius) view of
+        # the "primary" obstacle - the first static_obstacle/
+        # moving_obstacle entity, or the legacy world["obstacle"] if none
+        # is defined - since a lot of existing code (logging, the
+        # radar/track/fusion demo pipeline) reads sim.obstacle directly.
+        # It's refreshed every step in _advance_entities() as that entity
+        # moves, so it always reflects current position for a moving
+        # primary obstacle.
+        self._primary_obstacle_id = next(
+            (e["id"] for e in self.entities if e["kind"] in ("static_obstacle", "moving_obstacle")),
+            None)
+        self.obstacle = self._obstacle_view()
+
+        # Per-entity radius lookup, used by fusion (surface-distance to a
+        # fused/estimated center needs the same radius true detections use).
+        self._entity_radius = {e["id"]: e["radius"] for e in self.entities}
+
+        self._current_t = 0
 
         s = config["swarm"]
         self.num_uavs = s["num_uavs"]
@@ -265,13 +337,81 @@ class Simulation:
         self.confidence_error_samples = []
         self.log_rows = []
 
+    def _obstacle_view(self):
+        """Backward-compatible (x, y, radius) tuple for the primary
+        obstacle entity, or the zero-radius origin if none exists (an
+        all-targets, no-obstacle world is valid)."""
+        for e in self.entities:
+            if e["id"] == self._primary_obstacle_id:
+                return (e["x"], e["y"], e["radius"])
+        return (0.0, 0.0, 0.0)
+
+    def _entity_active(self, entity, t):
+        """An entity exists in the world (is sensable/collidable at all)
+        only once t >= appear_step and, if disappear_step is set, only
+        while t < disappear_step - modeling genuine appearance/
+        disappearance, not just moving out of sensor range."""
+        if t < entity["appear_step"]:
+            return False
+        if entity["disappear_step"] is not None and t >= entity["disappear_step"]:
+            return False
+        return True
+
+    def _advance_entities(self, t):
+        """Moves every active moving_obstacle/moving_target entity one
+        step (waypoint patrol if given, else straight-line constant
+        velocity that bounces off the world bounds), then refreshes
+        self.obstacle so backward-compatible consumers see the primary
+        obstacle's current position. Static obstacles and inactive
+        (not-yet-appeared/already-disappeared) entities are left alone."""
+        width = self.cfg["world"]["width"]
+        height = self.cfg["world"]["height"]
+
+        for e in self.entities:
+            if e["kind"] not in ("moving_obstacle", "moving_target"):
+                continue
+            if not self._entity_active(e, t):
+                continue
+
+            if e["waypoints"]:
+                wp = e["waypoints"][e["waypoint_idx"] % len(e["waypoints"])]
+                dx, dy = wp[0] - e["x"], wp[1] - e["y"]
+                step_dist = e["speed"] * self.dt
+                remaining = math.hypot(dx, dy)
+                if remaining <= max(step_dist, 1e-6):
+                    e["x"], e["y"] = wp[0], wp[1]
+                    e["waypoint_idx"] += 1
+                else:
+                    ux, uy = normalize(dx, dy)
+                    e["x"] += ux * step_dist
+                    e["y"] += uy * step_dist
+                continue
+
+            nx = e["x"] + e["vx"] * self.dt
+            ny = e["y"] + e["vy"] * self.dt
+            if e["bounce"]:
+                if nx < 0.0 or nx > width:
+                    e["vx"] *= -1.0
+                    nx = clamp(nx, 0.0, width)
+                if ny < 0.0 or ny > height:
+                    e["vy"] *= -1.0
+                    ny = clamp(ny, 0.0, height)
+            else:
+                nx = clamp(nx, 0.0, width)
+                ny = clamp(ny, 0.0, height)
+            e["x"], e["y"] = nx, ny
+
+        self.obstacle = self._obstacle_view()
+
     def _true_detections_for(self, i):
         dets = []
-        ox, oy, orad = self.obstacle
-        d_obs = dist(self.pos[i], (ox, oy)) - orad
-        if d_obs <= self.sensor_range:
-            dets.append({"kind": "obstacle", "id": "obstacle_0", "x": ox, "y": oy,
-                         "distance": max(d_obs, 0.0)})
+        for e in self.entities:
+            if not self._entity_active(e, self._current_t):
+                continue  # not yet appeared / already disappeared this step
+            d_ent = dist(self.pos[i], (e["x"], e["y"])) - e["radius"]
+            if d_ent <= self.sensor_range:
+                dets.append({"kind": e["kind"], "id": e["id"], "x": e["x"], "y": e["y"],
+                             "distance": max(d_ent, 0.0)})
         for j in range(self.num_uavs):
             if j == i:
                 continue
@@ -285,59 +425,77 @@ class Simulation:
     def _apply_fusion(self, raw_percepts):
         """Cross-UAV fusion step. Given each UAV's individually-perceived
         detection list (already corrupted by its own Perception), builds a
-        fused obstacle estimate from every UAV that currently has a real
-        (non-phantom) obstacle detection, then - if fusion is enabled -
-        overwrites/injects that fused estimate into every UAV's own
-        perceived list (recomputing distance/confidence per UAV). This is
-        how fusion can "recover" a detection an individual UAV's sensor
-        missed via false_negative/dropout, as long as at least one other
-        UAV still saw it."""
-        contributions = []
+        fused position estimate PER ENTITY ID from every UAV that
+        currently has a real (non-phantom) detection of that entity, then
+        - if fusion is enabled - overwrites/injects each fused estimate
+        into every UAV's own perceived list (recomputing distance/
+        confidence per UAV). This generalizes the original single-obstacle
+        fusion to however many obstacles/targets are in the world
+        (self.entities): each is fused independently, since two different
+        entities happening to be visible at once are not evidence about
+        each other. This is how fusion can "recover" a detection an
+        individual UAV's sensor missed via false_negative/dropout, as long
+        as at least one other UAV still saw that same entity."""
+        contributions_by_id = {}
         for i, dets in raw_percepts.items():
             for d in dets:
-                if d.get("id") == "obstacle_0":
-                    contributions.append((i, d["x"], d["y"], d.get("confidence", 0.5)))
+                eid = d.get("id")
+                # Only real (non-phantom, non-clutter) entity detections
+                # are fusable - UAV-to-UAV sightings ("uav_N") aren't
+                # entities and are never fused, same as before.
+                if d.get("is_phantom") or eid is None or eid.startswith("uav_"):
+                    continue
+                contributions_by_id.setdefault(eid, []).append((i, d["x"], d["y"], d.get("confidence", 0.5)))
 
-        fused = fuse_obstacle_detections(contributions, self.fusion_mode)
-        if fused is None:
-            return
-
-        ox, oy, orad = self.obstacle
-        for i, dets in raw_percepts.items():
-            had_own = any(d.get("id") == "obstacle_0" for d in dets)
-            fx, fy = fused["x"], fused["y"]
-            d_fused = max(dist(self.pos[i], (fx, fy)) - orad, 0.0)
-            if d_fused > self.sensor_range:
-                # Fused estimate is only usable if it's within this UAV's own
-                # sensing range - fusion shares detections, not omniscience.
+        for eid, contributions in contributions_by_id.items():
+            fused = fuse_obstacle_detections(contributions, self.fusion_mode)
+            if fused is None:
                 continue
-            if not had_own:
-                self.fusion_recovery_count += 1
-            fused_det = {
-                "kind": "obstacle", "id": "obstacle_0", "x": fx, "y": fy,
-                "distance": d_fused, "confidence": fused["confidence"],
-                "is_fused": True, "fusion_contributors": len(fused["contributors"]),
-            }
-            dets[:] = [d for d in dets if d.get("id") != "obstacle_0"] + [fused_det]
+
+            radius = self._entity_radius.get(eid, 0.0)
+            kind = next((e["kind"] for e in self.entities if e["id"] == eid), "obstacle")
+            for i, dets in raw_percepts.items():
+                had_own = any(d.get("id") == eid for d in dets)
+                fx, fy = fused["x"], fused["y"]
+                d_fused = max(dist(self.pos[i], (fx, fy)) - radius, 0.0)
+                if d_fused > self.sensor_range:
+                    # Fused estimate is only usable if it's within this UAV's own
+                    # sensing range - fusion shares detections, not omniscience.
+                    continue
+                if not had_own:
+                    self.fusion_recovery_count += 1
+                fused_det = {
+                    "kind": kind, "id": eid, "x": fx, "y": fy,
+                    "distance": d_fused, "confidence": fused["confidence"],
+                    "is_fused": True, "fusion_contributors": len(fused["contributors"]),
+                }
+                dets[:] = [d for d in dets if d.get("id") != eid] + [fused_det]
 
     def _inject_external_estimates(self, raw_percepts, external_estimates):
-        """Replaces each UAV's own obstacle_0 detection with an externally
-        supplied estimate (radar_track_model + fusion_model output), the
-        same way _apply_fusion replaces it with its own fused_det - just
-        sourced from track fusion instead of per-detection fusion."""
-        ox, oy, orad = self.obstacle
+        """Replaces each UAV's own detection of a given entity with an
+        externally supplied estimate (radar_track_model + fusion_model
+        output), the same way _apply_fusion replaces it with its own
+        fused_det - just sourced from track fusion instead of per-
+        detection fusion. Each estimate dict may include an "id" key
+        naming which entity it estimates (defaults to "obstacle_0" since
+        the existing radar/track/fusion demo pipeline only tracks the
+        primary obstacle today; multi-entity external tracking works the
+        same way once a caller supplies more than one id)."""
         for i, dets in raw_percepts.items():
             est = external_estimates.get(i)
             if est is None:
                 continue
+            eid = est.get("id", "obstacle_0")
+            radius = self._entity_radius.get(eid, 0.0)
             fx, fy = est["x"], est["y"]
-            d_fused = max(dist(self.pos[i], (fx, fy)) - orad, 0.0)
+            d_fused = max(dist(self.pos[i], (fx, fy)) - radius, 0.0)
+            kind = next((e["kind"] for e in self.entities if e["id"] == eid), "obstacle")
             fused_det = {
-                "kind": "obstacle", "id": "obstacle_0", "x": fx, "y": fy,
+                "kind": kind, "id": eid, "x": fx, "y": fy,
                 "distance": d_fused, "confidence": est.get("confidence", 0.5),
                 "is_fused": True, "fusion_contributors": est.get("num_sources", 1),
             }
-            dets[:] = [d for d in dets if d.get("id") != "obstacle_0"] + [fused_det]
+            dets[:] = [d for d in dets if d.get("id") != eid] + [fused_det]
 
     def _steer(self, i, perceived):
         tgt = self.targets[i]
@@ -398,6 +556,8 @@ class Simulation:
         both dicts keyed by uav id, covering only active (not-yet-arrived)
         UAVs."""
         active = [i for i in range(self.num_uavs) if not self.reached_goal[i]]
+        self._current_t = t
+        self._advance_entities(t)
         true_dets_all = {}
         raw_percepts = {}
         for i in active:
@@ -516,13 +676,15 @@ class Simulation:
                 "missed_response": missed_response,
             }
 
-        ox, oy, orad = self.obstacle
+        active_entities = [e for e in self.entities if self._entity_active(e, t)]
+
         for i in range(self.num_uavs):
-            d_obs = dist(new_pos[i], (ox, oy)) - orad
-            if d_obs <= self.collision_distance:
-                self.collision_count += 1
-            elif d_obs <= self.near_miss_distance:
-                self.near_miss_count += 1
+            for e in active_entities:
+                d_ent = dist(new_pos[i], (e["x"], e["y"])) - e["radius"]
+                if d_ent <= self.collision_distance:
+                    self.collision_count += 1
+                elif d_ent <= self.near_miss_distance:
+                    self.near_miss_count += 1
             for j in range(i + 1, self.num_uavs):
                 d_uav = dist(new_pos[i], new_pos[j])
                 if d_uav <= self.collision_distance:
@@ -532,18 +694,32 @@ class Simulation:
                 formation_dists.append(d_uav)
 
         # Per-UAV distance to the nearest *other UAV* and distance to the
-        # obstacle (surface distance), at the post-move positions - kept as
-        # a read-only pass, separate from the counting loop above so
-        # collision/near-miss totals are unaffected.
+        # nearest active entity (surface distance), at the post-move
+        # positions - kept as a read-only pass, separate from the
+        # counting loop above so collision/near-miss totals are unaffected.
         nearest_uav_info = [None] * self.num_uavs
         obstacle_dist_info = [None] * self.num_uavs
         nearest_info = [None] * self.num_uavs
         for i in range(self.num_uavs):
-            d_obs_i = dist(new_pos[i], (ox, oy)) - orad
-            obstacle_dist_info[i] = max(d_obs_i, 0.0)
+            nearest_type = None
+            nearest_dist = None
+            nearest_entity_dist = None
+            for e in active_entities:
+                d_ent = dist(new_pos[i], (e["x"], e["y"])) - e["radius"]
+                d_ent = max(d_ent, 0.0)
+                if nearest_entity_dist is None or d_ent < nearest_entity_dist:
+                    nearest_entity_dist = d_ent
+                if nearest_dist is None or d_ent < nearest_dist:
+                    nearest_dist = d_ent
+                    nearest_type = e["id"]
+            # obstacle_dist_info stays specifically the primary obstacle's
+            # distance (backward compatible column meaning), separate from
+            # nearest_entity_dist which is the closest of ALL entities.
+            ox, oy, orad = self.obstacle
+            obstacle_dist_info[i] = max(dist(new_pos[i], (ox, oy)) - orad, 0.0)
+            if nearest_type is None:
+                nearest_type, nearest_dist = "none", float("inf")
 
-            nearest_type = "obstacle"
-            nearest_dist = d_obs_i
             nearest_uav_dist = None
             for j in range(self.num_uavs):
                 if j == i:
@@ -587,6 +763,18 @@ class Simulation:
         tx, ty = self.targets[i]
         nearest_type, nearest_dist = nearest
 
+        # Ground truth for every currently-active entity (obstacles and
+        # targets alike), independent of what this UAV actually perceived
+        # - lets a log consumer see the full multi-entity world state
+        # (Task 7) without needing a separate per-entity table. Kept as one
+        # compact JSON column rather than exploding into per-entity
+        # columns, since the entity count/composition varies by scenario.
+        active_entities_summary = json.dumps([
+            {"id": e["id"], "kind": e["kind"], "x": round(e["x"], 3), "y": round(e["y"], 3),
+             "radius": e["radius"]}
+            for e in self.entities if self._entity_active(e, t)
+        ])
+
         return {
             "scenario": self.scenario_name,
             "step": t,
@@ -627,6 +815,10 @@ class Simulation:
             "mission_completed_flag": mission_completed,
 
             "reached_goal": self.reached_goal[i],
+
+            # Task 7: multi-entity ground truth.
+            "num_active_entities": sum(1 for e in self.entities if self._entity_active(e, t)),
+            "active_entities_json": active_entities_summary,
         }
 
     def run(self):

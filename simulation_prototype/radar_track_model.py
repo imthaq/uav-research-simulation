@@ -2,62 +2,69 @@
 radar_track_model.py
 
 Converts the raw, per-step radar detections produced by radar_like_model.py
-into simple radar tracks over time.
+into radar tracks over time, using a constant-velocity Kalman filter per
+track and nearest-neighbor data association gated on the filter's own
+innovation covariance (Mahalanobis distance), rather than a fixed-radius
+Euclidean gate.
 
 Each radar (one per UAV, since every UAV only sees its own radar's
 detections) maintains its own independent set of tracks.
 
 Track fields
 ------------
-track_id       - unique id for this track (scoped to one radar/UAV)
-est_x, est_y   - smoothed position estimate
-est_vx, est_vy - smoothed velocity estimate; None until the track has been
-                 matched to a detection at least twice (a single detection
-                 gives a position but not a velocity yet)
-confidence     - confidence carried over from the most recent matched
-                 detection (held steady while the track is coasting on a
-                 miss)
-age            - number of steps since the track was created
-missed_count   - consecutive steps with no matching detection (resets to 0
-                 on every match)
-status         - "tentative"  - just created, not yet matched enough times
-                                 in a row to be trusted
-                 "confirmed"  - matched CONFIRM_HITS times in a row
-                 "lost"       - missed MAX_MISSED times in a row; this is
-                                 the track's final row, after which it is
-                                 dropped
+track_id            - unique id for this track (scoped to one radar/UAV)
+est_x, est_y        - filtered position estimate
+est_vx, est_vy      - filtered velocity estimate
+covariance          - the filter's 4x4 state covariance, as a JSON-encoded
+                       list of lists (over [pos_x, pos_y, vel_x, vel_y])
+confidence          - confidence carried over from the most recent matched
+                       detection (held steady while coasting on a miss)
+age                 - number of steps since the track was created
+hit_count           - total number of matched detections over the track's
+                       life
+missed_count        - consecutive steps with no matching detection (resets
+                       to 0 on every match)
+existence_probability - recursive belief that this is a real target: rises
+                       toward 1 on every hit, decays on every miss
+status              - "tentative" - just created, not yet matched
+                                     CONFIRM_HITS times in a row
+                     - "confirmed" - matched CONFIRM_HITS times in a row
+                     - "coasting"  - a previously-matched track with no
+                                      detection this step, predicted forward
+                                      on its Kalman motion model
+                     - "lost"      - missed MAX_MISSED times in a row (or
+                                      existence_probability collapsed); this
+                                      row is the last one where the track is
+                                      still predicted/matched against
+                     - "deleted"   - final row for a track, emitted the step
+                                      after it went "lost"; it is then
+                                      dropped for good
 
-How tracks are formed (nearest-neighbor association)
------------------------------------------------------
+How tracks are formed (Kalman filter + gated nearest-neighbor association)
+----------------------------------------------------------------------------
 At each time step, for every radar:
-  1. Existing tracks are matched to this step's detections by nearest
-     neighbor: candidate (track, detection) pairs within GATE_DISTANCE are
+  1. Every existing track predicts its next state (position/velocity/
+     covariance) forward with a constant-velocity motion model.
+  2. Tracks are matched to this step's detections by nearest neighbor:
+     candidate (track, detection) pairs whose Mahalanobis distance (using
+     the track's innovation covariance) falls under GATE_CHI2 are
      considered in order of increasing distance, and each track/detection
      is used at most once (best matches get first pick).
-  2. Matched tracks fold in the new detection (position/velocity smoothed
-     with simple exponential filters) and their missed_count resets to 0.
-  3. Unmatched tracks are coasted forward using their last known velocity
-     and missed_count goes up; too many misses in a row -> status "lost".
-  4. Unmatched detections spawn new tentative tracks.
-
-This is intentionally a simple nearest-neighbor + exponential-smoothing
-tracker (not a Kalman filter) to keep the model easy to follow.
+  3. Matched tracks run a Kalman update from the matched detection, reset
+     missed_count, and bump existence_probability up.
+  4. Unmatched tracks stay at their predicted state, missed_count goes up,
+     and existence_probability decays; too many misses (or a collapsed
+     existence_probability) -> status "lost", then "deleted" next step.
+  5. Unmatched detections spawn new tentative tracks.
 """
 
 import argparse
 import csv
 import json
-import math
+
+import numpy as np
 
 from radar_like_model import RadarLikeModel
-
-TENTATIVE = "tentative"
-CONFIRMED = "confirmed"
-LOST = "lost"
-
-# How close a detection has to be to an existing track's (coasted)
-# position to be considered a match for it.
-GATE_DISTANCE = 4.0
 
 # Consecutive matches needed before a tentative track becomes confirmed.
 CONFIRM_HITS = 3
@@ -65,111 +72,160 @@ CONFIRM_HITS = 3
 # Consecutive misses allowed before a track is dropped as lost.
 MAX_MISSED = 3
 
-# Exponential smoothing weights (0-1): higher = trust the new detection
-# more, lower = trust the track's existing estimate more.
-POSITION_ALPHA = 0.6
-VELOCITY_ALPHA = 0.5
+# Mahalanobis-distance-squared gate (~99% confidence region, 2 DOF).
+GATE_CHI2 = 9.21
+
+# Existence-probability recursion: how much a hit/miss moves the belief,
+# and the floor below which a track is lost outright even before MAX_MISSED.
+EXIST_PROB_INIT = 0.65
+EXIST_PROB_HIT_GAIN = 0.15
+EXIST_PROB_MISS_DECAY = 0.3
+EXIST_PROB_DELETE_FLOOR = 0.1
+
+# Constant-velocity process noise (accel std, world units/s^2). Tunable -
+# higher trusts new detections more, lower trusts the motion model more.
+PROCESS_ACCEL_STD = 1.0
+
+# Initial velocity uncertainty for a freshly spawned track (position
+# uncertainty starts at the measurement noise itself).
+INIT_VELOCITY_VAR = 25.0
+
+_H = np.array([[1.0, 0.0, 0.0, 0.0],
+               [0.0, 1.0, 0.0, 0.0]])
+_I4 = np.eye(4)
+
+
+def _F(dt):
+    return np.array([[1.0, 0.0, dt, 0.0],
+                      [0.0, 1.0, 0.0, dt],
+                      [0.0, 0.0, 1.0, 0.0],
+                      [0.0, 0.0, 0.0, 1.0]])
+
+
+def _Q(dt, accel_std=PROCESS_ACCEL_STD):
+    """Discrete white-noise-acceleration process noise for a constant-
+    velocity model."""
+    q = accel_std ** 2
+    dt2, dt3, dt4 = dt * dt, dt ** 3, dt ** 4
+    return q * np.array([
+        [dt4 / 4, 0.0, dt3 / 2, 0.0],
+        [0.0, dt4 / 4, 0.0, dt3 / 2],
+        [dt3 / 2, 0.0, dt2, 0.0],
+        [0.0, dt3 / 2, 0.0, dt2],
+    ])
 
 
 class RadarTrack:
-    """One tracked object as seen by a single radar (UAV)."""
+    """One tracked object as seen by a single radar (UAV), estimated with
+    a constant-velocity Kalman filter."""
 
-    def __init__(self, radar_id, track_num, x, y, confidence, step):
+    TENTATIVE = "tentative"
+    CONFIRMED = "confirmed"
+    COASTING = "coasting"
+    LOST = "lost"
+    DELETED = "deleted"
+
+    def __init__(self, radar_id, track_num, x, y, confidence, r_std, step):
         self.track_id = f"r{radar_id}_t{track_num}"
         self.radar_id = radar_id
-        self.x = x
-        self.y = y
-        self.vx = None
-        self.vy = None
+        self.state = np.array([x, y, 0.0, 0.0])
+        self.P = np.diag([r_std ** 2, r_std ** 2, INIT_VELOCITY_VAR, INIT_VELOCITY_VAR])
         self.confidence = confidence
         self.age = 1
-        self.hit_streak = 1
+        self.hit_count = 1
         self.missed_count = 0
-        self.status = TENTATIVE
+        self.existence_prob = EXIST_PROB_INIT
+        self.status = self.TENTATIVE
+        self._hit_streak = 1
 
-    def predicted_position(self, dt):
-        """Where the track would be this step if nothing updates it,
-        coasting on its last known velocity (0 if none established yet)."""
-        vx = self.vx or 0.0
-        vy = self.vy or 0.0
-        return self.x + vx * dt, self.y + vy * dt
+    def predict(self, dt):
+        F = _F(dt)
+        self.state = F @ self.state
+        self.P = F @ self.P @ F.T + _Q(dt)
 
-    def apply_match(self, det_x, det_y, confidence, dt):
-        """Fold in a matched detection: smooth position and velocity with
-        simple alpha filters."""
-        raw_vx = (det_x - self.x) / dt if dt > 0 else 0.0
-        raw_vy = (det_y - self.y) / dt if dt > 0 else 0.0
+    def _innovation(self, det_x, det_y, r_std):
+        z = np.array([det_x, det_y])
+        R = np.eye(2) * (r_std ** 2)
+        S = _H @ self.P @ _H.T + R
+        y = z - _H @ self.state
+        return y, S
 
-        self.x = POSITION_ALPHA * det_x + (1 - POSITION_ALPHA) * self.x
-        self.y = POSITION_ALPHA * det_y + (1 - POSITION_ALPHA) * self.y
+    def mahalanobis_sq(self, det_x, det_y, r_std):
+        y, S = self._innovation(det_x, det_y, r_std)
+        try:
+            return float(y @ np.linalg.inv(S) @ y)
+        except np.linalg.LinAlgError:
+            return float("inf")
 
-        if self.vx is None:
-            # First re-observation of this track - take the raw velocity
-            # outright, there's nothing to smooth it against yet.
-            self.vx, self.vy = raw_vx, raw_vy
-        else:
-            self.vx = VELOCITY_ALPHA * raw_vx + (1 - VELOCITY_ALPHA) * self.vx
-            self.vy = VELOCITY_ALPHA * raw_vy + (1 - VELOCITY_ALPHA) * self.vy
+    def apply_match(self, det_x, det_y, confidence, r_std):
+        y, S = self._innovation(det_x, det_y, r_std)
+        K = self.P @ _H.T @ np.linalg.inv(S)
+        self.state = self.state + K @ y
+        self.P = (_I4 - K @ _H) @ self.P
 
         self.confidence = confidence
         self.missed_count = 0
-        self.hit_streak += 1
+        self._hit_streak += 1
+        self.hit_count += 1
         self.age += 1
-        if self.status == TENTATIVE and self.hit_streak >= CONFIRM_HITS:
-            self.status = CONFIRMED
+        self.existence_prob = min(0.99, self.existence_prob + (1 - self.existence_prob) * EXIST_PROB_HIT_GAIN)
+        self.status = self.CONFIRMED if (self.status == self.CONFIRMED
+                                          or self._hit_streak >= CONFIRM_HITS) else self.TENTATIVE
 
-    def apply_miss(self, dt):
-        """No detection matched this track this step: coast it forward and
-        count the miss."""
-        self.x, self.y = self.predicted_position(dt)
+    def apply_miss(self):
         self.missed_count += 1
-        self.hit_streak = 0
+        self._hit_streak = 0
         self.age += 1
-        if self.missed_count >= MAX_MISSED:
-            self.status = LOST
+        self.existence_prob = max(0.01, self.existence_prob * (1 - EXIST_PROB_MISS_DECAY))
+        if self.missed_count >= MAX_MISSED or self.existence_prob < EXIST_PROB_DELETE_FLOOR:
+            self.status = self.LOST
+        else:
+            self.status = self.COASTING
 
-    def as_row(self, scenario, step):
+    def as_row(self, step):
         return {
-            "scenario": scenario,
             "time_step": step,
             "radar_id": self.radar_id,
             "track_id": self.track_id,
-            "est_x": round(self.x, 4),
-            "est_y": round(self.y, 4),
-            "est_vx": round(self.vx, 4) if self.vx is not None else None,
-            "est_vy": round(self.vy, 4) if self.vy is not None else None,
+            "est_x": round(float(self.state[0]), 4),
+            "est_y": round(float(self.state[1]), 4),
+            "est_vx": round(float(self.state[2]), 4),
+            "est_vy": round(float(self.state[3]), 4),
+            "covariance": json.dumps(np.round(self.P, 6).tolist()),
             "confidence": self.confidence,
             "age": self.age,
+            "hit_count": self.hit_count,
             "missed_count": self.missed_count,
+            "existence_probability": round(float(self.existence_prob), 4),
             "status": self.status,
         }
 
 
 class RadarTracker:
-    """Runs nearest-neighbor tracking for a single radar (one UAV) across
-    a sequence of steps."""
+    """Runs Kalman-filter tracking with gated nearest-neighbor association
+    for a single radar (one UAV) across a sequence of steps."""
 
-    def __init__(self, radar_id):
+    def __init__(self, radar_id, r_std=1.0):
         self.radar_id = radar_id
+        self.r_std = r_std
         self.tracks = []
         self._next_track_num = 1
 
-    def _match(self, detections, dt):
+    def _match(self, tracks, detections):
         """Greedy nearest-neighbor association: build every (track,
-        detection) pair within GATE_DISTANCE, then claim pairs in order of
-        increasing distance so the closest matches win first."""
+        detection) pair inside the Mahalanobis gate, then claim pairs in
+        order of increasing distance so the closest (most statistically
+        likely) matches win first."""
         candidates = []
-        for ti, track in enumerate(self.tracks):
-            pred_x, pred_y = track.predicted_position(dt)
+        for ti, track in enumerate(tracks):
             for di, det in enumerate(detections):
-                d = math.hypot(det["x"] - pred_x, det["y"] - pred_y)
-                if d <= GATE_DISTANCE:
-                    candidates.append((d, ti, di))
+                d2 = track.mahalanobis_sq(det["x"], det["y"], self.r_std)
+                if d2 <= GATE_CHI2:
+                    candidates.append((d2, ti, di))
         candidates.sort(key=lambda c: c[0])
 
-        matched_track = {}
-        matched_det = {}
-        for d, ti, di in candidates:
+        matched_track, matched_det = {}, {}
+        for d2, ti, di in candidates:
             if ti in matched_track or di in matched_det:
                 continue
             matched_track[ti] = di
@@ -179,22 +235,35 @@ class RadarTracker:
     def update(self, step, detections, dt):
         """Process one step's detections (list of dicts with at least
         x, y, confidence) for this radar. Returns the rows to log for this
-        step: one per active track (including any that just went lost)."""
-        matched_track = self._match(detections, dt)
-
+        step: one per track still being processed, including a final
+        "deleted" row for any track that went "lost" last step."""
         rows = []
+
+        # Tracks that were marked "lost" last step get one final "deleted"
+        # row this step, then are dropped for good.
+        active = []
+        for track in self.tracks:
+            if track.status == RadarTrack.LOST:
+                track.status = RadarTrack.DELETED
+                track.age += 1
+                rows.append(track.as_row(step))
+            else:
+                active.append(track)
+
+        for track in active:
+            track.predict(dt)
+
+        matched_track = self._match(active, detections)
+
         still_active = []
-        for ti, track in enumerate(self.tracks):
+        for ti, track in enumerate(active):
             if ti in matched_track:
                 det = detections[matched_track[ti]]
-                track.apply_match(det["x"], det["y"], det.get("confidence"), dt)
+                track.apply_match(det["x"], det["y"], det.get("confidence"), self.r_std)
             else:
-                track.apply_miss(dt)
-
-            rows.append(track.as_row(None, step))
-            if track.status != LOST:
-                still_active.append(track)
-        self.tracks = still_active
+                track.apply_miss()
+            rows.append(track.as_row(step))
+            still_active.append(track)
 
         matched_det_indices = set(matched_track.values())
         for di, det in enumerate(detections):
@@ -202,15 +271,16 @@ class RadarTracker:
                 continue
             new_track = RadarTrack(
                 self.radar_id, self._next_track_num, det["x"], det["y"],
-                det.get("confidence"), step)
+                det.get("confidence"), self.r_std, step)
             self._next_track_num += 1
-            self.tracks.append(new_track)
-            rows.append(new_track.as_row(None, step))
+            still_active.append(new_track)
+            rows.append(new_track.as_row(step))
 
+        self.tracks = still_active
         return rows
 
 
-def build_tracks(scenario_name, detection_rows, dt):
+def build_tracks(scenario_name, detection_rows, dt, measurement_std=1.0):
     """Runs one RadarTracker per radar_id over detection_rows (as produced
     by radar_like_model.RadarLikeModel.run(), already limited to one
     scenario) and returns the full list of track log rows, in step order.
@@ -233,7 +303,7 @@ def build_tracks(scenario_name, detection_rows, dt):
     radar_ids = sorted({r for r, _ in by_radar_step})
     max_step = max((s for _, s in by_radar_step), default=-1)
 
-    trackers = {radar_id: RadarTracker(radar_id) for radar_id in radar_ids}
+    trackers = {radar_id: RadarTracker(radar_id, measurement_std) for radar_id in radar_ids}
 
     all_rows = []
     for step in range(max_step + 1):
@@ -249,7 +319,7 @@ def build_tracks(scenario_name, detection_rows, dt):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Turn raw radar detections into simple radar tracks")
+        description="Turn raw radar detections into Kalman-filter radar tracks")
     parser.add_argument("--config", default="simulation_config.json")
     parser.add_argument("--scenario", default=None, help="Run just one scenario instead of all")
     parser.add_argument("--log", default="logs/radar_track_log.csv")
@@ -265,7 +335,7 @@ def main():
     for name in scenario_names:
         model = RadarLikeModel(config, name)
         detection_rows = model.run()
-        track_rows = build_tracks(name, detection_rows, dt)
+        track_rows = build_tracks(name, detection_rows, dt, model.range_noise_std)
         all_rows.extend(track_rows)
         print(f"{name}: {len(detection_rows)} radar detections -> {len(track_rows)} track rows")
 
