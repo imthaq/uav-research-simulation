@@ -55,12 +55,9 @@ Radar false alarms / clutter (Task 6)
 --------------------------------------
 Independently of the existing config-driven false_positive_rate ("phantom")
 mechanism, this module also generates radar clutter every step via
-_generate_clutter(): the number of clutter "candidate returns" is drawn
-from clutter_distribution ("poisson", default - rate clutter_lambda; or
-"fixed" - always round(clutter_lambda)), uniformly positioned inside its
-own [clutter_range_min, clutter_range_max] annulus (independent of the
-target-detection radar_min_range/radar_max_range), and each candidate is
-confirmed as a reported false detection
+_generate_clutter(): a Poisson-distributed number of clutter "candidate
+returns" (rate = radar_clutter_density) are drawn inside the radar's
+sensing disk, and each candidate is confirmed as a reported false detection
 with probability radar_false_alarm_probability (P_FA). Confirmed clutter
 points get a random range/bearing (and therefore x/y), a confidence score,
 and are flagged false_alarm_flag=True/clutter_flag=True. They are injected
@@ -69,58 +66,6 @@ Simulation's existing avoidance/steering logic reacts to them exactly like
 any other false detection), which can increase unnecessary avoidance, wrong
 decisions, and response time. This runs on every step of every scenario -
 there is no separate demo scenario for it.
-
-Probabilistic measurement uncertainty (Task 2)
-------------------------------------------------
-Every reported measurement (real detection or clutter false alarm) now
-carries an explicit uncertainty representation instead of a single fixed
-noise std applied blindly regardless of geometry or conditions:
-  - range_variance / bearing_variance / radial_velocity_variance: per-
-    channel measurement variance (meters^2, radians^2, (units/sec)^2).
-  - measurement_covariance: the 3x3 covariance matrix over
-    (range, bearing, radial_velocity), reported as a JSON string in each
-    CSV row (list-of-lists on the in-memory row dict). Channels are
-    modeled independent (diagonal), matching how the noise is actually
-    drawn in _apply_radar_noise/radial-velocity noising - there's no
-    cross-channel correlation model in this simulator.
-  - radar_snr_db / measurement_quality: a simplified radar-equation-style
-    SNR proxy (_snr_db_for_range) that falls off with the 4th power of
-    range by default (radar_snr_exponent), attenuated further by the
-    environmental condition, then squashed into a [0,1] "quality" factor
-    (_quality_from_snr) used to scale every variance up and the effective
-    P_D down as SNR drops.
-  - probability_of_detection: no longer the single static
-    radar_detection_probability - it's now recomputed per detection
-    (_measurement_uncertainty) as that base P_D scaled by the
-    environmental condition's and radar reliability state's PD
-    multipliers and by measurement quality, and IS what actually gates
-    the Task 5 Bernoulli detection roll below (so a distant/low-SNR
-    target is now genuinely harder to detect, not just logged as such).
-  - probability_of_false_alarm: similarly, the static
-    radar_false_alarm_probability is scaled per clutter candidate by the
-    environmental/reliability PFA multipliers and by clutter density, and
-    IS what gates whether a clutter candidate is confirmed as a reported
-    false alarm in _generate_clutter.
-
-Two new categorical config knobs drive the environmental/reliability
-multipliers (ENV_FACTORS / RELIABILITY_FACTORS below), read scenario-first
-same as every other radar_* key:
-  - radar_environmental_condition: "clear" (default) | "rain" | "fog" |
-    "storm". Degrades SNR (attenuation_db), raises noise/variance
-    (noise_mult), lowers PD (pd_mult), and raises PFA/clutter
-    (pfa_mult/clutter_mult).
-  - radar_reliability_state: "nominal" (default) | "degraded" |
-    "critical". Represents radar hardware health, independent of the
-    environment; degrades noise/PD/PFA the same shape as above.
-
-Net effect matches the required behavior: distant targets get larger
-range/bearing/radial-velocity variance and lower PD (range enters
-_snr_db_for_range); low SNR (far range, bad environment, degraded
-hardware) lowers measurement quality and therefore reliability
-(PD down, variance up); high clutter density raises PFA and false
-detections (both directly, via more Poisson candidates, and via the
-clutter_mult factor folded into PFA); high noise_std/environmental/
-reliability degradation raises every entry of the covariance matrix.
 
 Radar sensing limits (Task 7)
 ------------------------------
@@ -207,7 +152,6 @@ class RadarLikeModel:
                                                      # reported as a detection
     DEFAULT_RADAR_CLUTTER_DENSITY = 0.5             # mean clutter candidate
                                                      # returns per scan (Poisson rate)
-    DEFAULT_CLUTTER_DISTRIBUTION = "poisson"        # "poisson" or "fixed"
 
     # Task 7: radar sensing limits.
     DEFAULT_MIN_RANGE = 0.0                         # no blind zone
@@ -215,50 +159,6 @@ class RadarLikeModel:
     DEFAULT_LATENCY_STEPS = 0
     DEFAULT_DROPOUT_PROBABILITY = 0.0
     DEFAULT_CONFIDENCE_ERROR = 0.0
-
-    # Task 2: probabilistic measurement uncertainty. Simplified
-    # radar-equation-style SNR proxy: SNR(range) falls off by
-    # radar_snr_exponent * 10*log10(range/reference_range) dB relative to
-    # radar_reference_snr_db at radar_reference_range (4th-power one-way
-    # falloff, the conventional two-way radar-range-equation shape, is the
-    # default exponent).
-    DEFAULT_REFERENCE_SNR_DB = 30.0
-    DEFAULT_SNR_EXPONENT = 4.0
-    DEFAULT_ENVIRONMENTAL_CONDITION = "clear"
-    DEFAULT_RELIABILITY_STATE = "nominal"
-
-    # SNR floor/ceiling for reporting - a proxy model like this can produce
-    # unbounded values at very short/long range, which would make the
-    # quality factor and variance scaling below misbehave.
-    SNR_DB_MIN = -20.0
-    SNR_DB_MAX = 60.0
-
-    # Environmental condition -> degradation multipliers. attenuation_db
-    # subtracts directly from SNR; noise_mult scales every reported
-    # variance; pd_mult/pfa_mult scale the effective per-detection
-    # probability of detection / false alarm; clutter_mult scales the
-    # Poisson clutter-candidate rate (heavier weather -> more clutter
-    # returns, e.g. rain/precipitation clutter).
-    ENV_FACTORS = {
-        "clear": {"attenuation_db": 0.0, "noise_mult": 1.0, "pd_mult": 1.0,
-                   "pfa_mult": 1.0, "clutter_mult": 1.0},
-        "fog":   {"attenuation_db": 2.0, "noise_mult": 1.15, "pd_mult": 0.95,
-                   "pfa_mult": 1.1, "clutter_mult": 1.1},
-        "rain":  {"attenuation_db": 3.0, "noise_mult": 1.3, "pd_mult": 0.9,
-                   "pfa_mult": 1.4, "clutter_mult": 1.5},
-        "storm": {"attenuation_db": 6.0, "noise_mult": 1.6, "pd_mult": 0.75,
-                   "pfa_mult": 1.8, "clutter_mult": 2.0},
-    }
-
-    # Radar hardware reliability state -> degradation multipliers.
-    # Independent of environmental condition (a nominal radar in a storm
-    # and a degraded radar in clear weather both get worse, and a
-    # degraded radar in a storm gets worse still - the two stack).
-    RELIABILITY_FACTORS = {
-        "nominal":  {"noise_mult": 1.0, "pd_mult": 1.0, "pfa_mult": 1.0},
-        "degraded": {"noise_mult": 1.5, "pd_mult": 0.85, "pfa_mult": 1.3},
-        "critical": {"noise_mult": 2.5, "pd_mult": 0.6, "pfa_mult": 1.8},
-    }
 
     def __init__(self, config, scenario_name):
         self.cfg = config
@@ -307,26 +207,6 @@ class RadarLikeModel:
         self.radar_field_of_view = scn.get(
             "radar_field_of_view", radar_cfg.get("radar_field_of_view", self.DEFAULT_FIELD_OF_VIEW_DEG))
 
-        # Task 4: probabilistic clutter generation. clutter_lambda is the
-        # mean number of clutter candidates per scan (falls back to the
-        # older radar_clutter_density key so existing configs/Task 2's PFA
-        # clutter_factor keep working unchanged). clutter_distribution picks
-        # how that count is drawn: "poisson" (recommended - a real varying
-        # clutter count) or "fixed" (always round(clutter_lambda), for A/B
-        # comparison against the old behavior). clutter_range_min/max give
-        # clutter its own annulus, independent of the target-detection
-        # radar_min_range/radar_max_range.
-        self.clutter_lambda = scn.get(
-            "clutter_lambda", radar_cfg.get("clutter_lambda", self.clutter_density))
-        self.clutter_distribution = scn.get(
-            "clutter_distribution", radar_cfg.get("clutter_distribution", self.DEFAULT_CLUTTER_DISTRIBUTION))
-        if self.clutter_distribution not in ("poisson", "fixed"):
-            raise ValueError(f"Unknown clutter_distribution: {self.clutter_distribution!r}")
-        self.clutter_range_min = scn.get(
-            "clutter_range_min", radar_cfg.get("clutter_range_min", self.radar_min_range))
-        self.clutter_range_max = scn.get(
-            "clutter_range_max", radar_cfg.get("clutter_range_max", self.radar_max_range))
-
         default_update_rate = (1.0 / self.dt) if self.dt > 0 else 1.0
         self.radar_update_rate = scn.get(
             "radar_update_rate", radar_cfg.get("radar_update_rate", default_update_rate))
@@ -341,34 +221,6 @@ class RadarLikeModel:
             radar_cfg.get("radar_dropout_probability", self.DEFAULT_DROPOUT_PROBABILITY))
         self.radar_confidence_error = scn.get(
             "radar_confidence_error", radar_cfg.get("radar_confidence_error", self.DEFAULT_CONFIDENCE_ERROR))
-
-        # Task 2: probabilistic measurement uncertainty. Scenario override
-        # -> top-level "radar" config section -> built-in default, same
-        # pattern as every other radar_* key above.
-        self.reference_snr_db = scn.get(
-            "radar_reference_snr_db", radar_cfg.get("radar_reference_snr_db", self.DEFAULT_REFERENCE_SNR_DB))
-        self.snr_exponent = scn.get(
-            "radar_snr_exponent", radar_cfg.get("radar_snr_exponent", self.DEFAULT_SNR_EXPONENT))
-        # Reference range defaults to half the radar's max range: SNR
-        # equals radar_reference_snr_db at that point, falling below it
-        # for targets farther out and rising above it for closer targets.
-        self.reference_range = scn.get(
-            "radar_reference_range",
-            radar_cfg.get("radar_reference_range", max(self.radar_max_range / 2.0, 0.5)))
-
-        env_condition = scn.get(
-            "radar_environmental_condition",
-            radar_cfg.get("radar_environmental_condition", self.DEFAULT_ENVIRONMENTAL_CONDITION))
-        self.environmental_condition = env_condition if env_condition in self.ENV_FACTORS else self.DEFAULT_ENVIRONMENTAL_CONDITION
-
-        reliability_state = scn.get(
-            "radar_reliability_state",
-            radar_cfg.get("radar_reliability_state", self.DEFAULT_RELIABILITY_STATE))
-        self.radar_reliability_state = (
-            reliability_state if reliability_state in self.RELIABILITY_FACTORS else self.DEFAULT_RELIABILITY_STATE)
-
-        self._env_factors = self.ENV_FACTORS[self.environmental_condition]
-        self._reliability_factors = self.RELIABILITY_FACTORS[self.radar_reliability_state]
 
         self._clutter_counter = 0  # monotonically increasing id suffix for generated clutter points
 
@@ -385,103 +237,6 @@ class RadarLikeModel:
         self._patch_perception()
         self._patch_fusion()
         self._patch_step()
-
-    # ------------------------------------------------------------------
-    # Task 2: probabilistic measurement uncertainty
-    # ------------------------------------------------------------------
-    def _snr_db_for_range(self, rng_):
-        """Simplified radar-equation-style SNR proxy: falls off by
-        snr_exponent * 10*log10(range/reference_range) dB relative to
-        reference_snr_db at reference_range, then attenuated by the
-        current environmental condition. Returns None if rng_ isn't
-        known (e.g. no ground-truth range available)."""
-        if rng_ is None or rng_ <= 0:
-            return None
-        raw_snr = (self.reference_snr_db
-                   - self.snr_exponent * 10.0 * math.log10(max(rng_, 1e-6) / self.reference_range)
-                   - self._env_factors["attenuation_db"])
-        return clamp(raw_snr, self.SNR_DB_MIN, self.SNR_DB_MAX)
-
-    def _quality_from_snr(self, snr_db):
-        """Maps SNR (dB) to a [0, 1] measurement-quality factor via a
-        logistic squash of the linear SNR ratio: quality = SNR / (SNR+1).
-        Near 0 at/below 0 dB (signal at or below noise floor - unreliable),
-        approaching 1 as SNR climbs well above 0 dB (clean signal)."""
-        if snr_db is None:
-            return 0.0
-        snr_linear = 10.0 ** (snr_db / 10.0)
-        return clamp(snr_linear / (snr_linear + 1.0), 0.0, 1.0)
-
-    def _measurement_uncertainty(self, rng_):
-        """Computes the full per-measurement uncertainty representation
-        for a detection at (true or reported) range rng_: per-channel
-        variance, the covariance matrix over them, SNR/quality, and the
-        environment-and-reliability-adjusted effective probability of
-        detection (PD) and probability of false alarm (PFA) that this
-        measurement's conditions imply.
-
-        Variance scaling: noise_scale grows as environmental condition and
-        radar reliability state worsen (their noise_mult factors), and as
-        measurement quality (SNR-derived) drops - so distant, low-SNR,
-        bad-weather, or degraded-hardware measurements all get larger
-        reported variance, compounding rather than substituting for each
-        other. quality is floored (not fully divided out) so noise_scale
-        stays finite even at very low/negative SNR.
-        """
-        snr_db = self._snr_db_for_range(rng_)
-        quality = self._quality_from_snr(snr_db)
-
-        env = self._env_factors
-        rel = self._reliability_factors
-
-        noise_scale = (env["noise_mult"] * rel["noise_mult"]) / max(quality, 0.05)
-
-        range_variance = (self.range_noise_std * noise_scale) ** 2
-        bearing_variance = (self.bearing_noise_std * noise_scale) ** 2
-        radial_velocity_variance = (self.radial_velocity_noise_std * noise_scale) ** 2
-
-        # Diagonal covariance over (range, bearing, radial_velocity) - no
-        # cross-channel correlation is modeled anywhere else in this
-        # simulator (each channel is noised independently), so off-
-        # diagonal terms are 0 rather than fabricated.
-        covariance = [
-            [range_variance, 0.0, 0.0],
-            [0.0, bearing_variance, 0.0],
-            [0.0, 0.0, radial_velocity_variance],
-        ]
-
-        # PD: base radar_detection_probability, degraded by environment/
-        # reliability multipliers and by SNR-derived quality. Quality is
-        # blended (0.3 floor + 0.7*quality) rather than used raw, so a
-        # target isn't rendered *undetectable* by SNR alone when
-        # radar_detection_probability is already high - it still has to
-        # fail the environment/reliability multipliers too, matching how
-        # PD in the existing config is a single scalar knob, not a hard
-        # cliff at 0 dB.
-        pd_quality_factor = 0.3 + 0.7 * quality
-        pd_effective = clamp(
-            self.detection_probability * env["pd_mult"] * rel["pd_mult"] * pd_quality_factor,
-            0.0, 1.0)
-
-        # PFA: base radar_false_alarm_probability, raised by environment/
-        # reliability multipliers and by clutter intensity (denser clutter
-        # environments produce more confirmable-looking returns per
-        # candidate, on top of clutter_lambda producing more candidates).
-        clutter_factor = 1.0 + (self.clutter_lambda * env["clutter_mult"]) / 2.0
-        pfa_effective = clamp(
-            self.false_alarm_probability * env["pfa_mult"] * rel["pfa_mult"] * clutter_factor,
-            0.0, 1.0)
-
-        return {
-            "snr_db": snr_db,
-            "quality": quality,
-            "range_variance": range_variance,
-            "bearing_variance": bearing_variance,
-            "radial_velocity_variance": radial_velocity_variance,
-            "covariance": covariance,
-            "pd_effective": pd_effective,
-            "pfa_effective": pfa_effective,
-        }
 
     # ------------------------------------------------------------------
     # Radar measurement: range/bearing noise, converted back to x/y
@@ -502,21 +257,8 @@ class RadarLikeModel:
         true_range = math.hypot(dx, dy)
         true_bearing = math.atan2(dy, dx)
 
-        # Task 2: use this detection's own range/SNR/environment/
-        # reliability-derived variance if it's already been computed
-        # (surviving real detections get one attached in _patch_perception
-        # before this runs); otherwise fall back to computing it fresh
-        # from true_range (covers phantoms, which skip the PD gate).
-        uncertainty = d.get("_uncertainty")
-        if uncertainty is None:
-            uncertainty = self._measurement_uncertainty(true_range)
-            d["_uncertainty"] = uncertainty
-
-        range_std = math.sqrt(uncertainty["range_variance"])
-        bearing_std = math.sqrt(uncertainty["bearing_variance"])
-
-        noisy_range = max(true_range + self.radar_rng.gauss(0.0, range_std), 0.05)
-        noisy_bearing = true_bearing + self.radar_rng.gauss(0.0, bearing_std)
+        noisy_range = max(true_range + self.radar_rng.gauss(0.0, self.range_noise_std), 0.05)
+        noisy_bearing = true_bearing + self.radar_rng.gauss(0.0, self.bearing_noise_std)
 
         d["x"] = uav_pos[0] + noisy_range * math.cos(noisy_bearing)
         d["y"] = uav_pos[1] + noisy_range * math.sin(noisy_bearing)
@@ -601,41 +343,29 @@ class RadarLikeModel:
 
     def _generate_clutter(self, uav_pos, heading=None, half_fov=None):
         """Generates this scan's confirmed radar clutter detections for one
-        UAV, confined to its own [clutter_range_min, clutter_range_max]
+        UAV, confined to the radar's [radar_min_range, radar_max_range]
         annulus and (Task 7) field-of-view sector if one is set. The number
-        of *candidate* clutter returns is drawn from clutter_distribution
-        ("poisson", default - Poisson(clutter_lambda); or "fixed" - always
-        round(clutter_lambda)); each candidate is independently confirmed
-        as a reported false detection with probability pfa_effective (Task
-        2's range/environment/reliability/clutter-adjusted PFA). This runs
-        every step for every scenario - it is not a special demo scenario,
-        it is the radar's ordinary noise floor."""
+        of *candidate* clutter returns is drawn from
+        Poisson(radar_clutter_density); each candidate is independently
+        confirmed as a reported false detection with probability
+        radar_false_alarm_probability (P_FA). This runs every step for
+        every scenario - it is not a special demo scenario, it is the
+        radar's ordinary noise floor."""
         dets = []
-        if self.clutter_distribution == "fixed":
-            num_candidates = round(self.clutter_lambda)
-        else:
-            num_candidates = self._poisson_sample(self.clutter_lambda)
+        num_candidates = self._poisson_sample(self.clutter_density)
         for _ in range(num_candidates):
-            # Uniform-in-annulus-area radius sampling so clutter isn't
-            # artificially bunched near the inner or outer edge. Sampled
-            # before the confirmation roll (Task 2) so PFA can itself be
-            # range-dependent, same as PD is for real detections.
-            lo2, hi2 = self.clutter_range_min ** 2, self.clutter_range_max ** 2
-            rng_ = math.sqrt(self.radar_rng.uniform(lo2, hi2)) if hi2 > lo2 else self.clutter_range_max
-
-            uncertainty = self._measurement_uncertainty(rng_)
-
-            # Task 2: confirmation uses the environment/reliability/
-            # clutter-density-adjusted effective PFA, not the flat config
-            # scalar - denser clutter and worse conditions both raise the
-            # odds a given candidate return gets reported.
-            if self.radar_rng.random() >= uncertainty["pfa_effective"]:
+            if self.radar_rng.random() >= self.false_alarm_probability:
                 continue  # candidate didn't cross the detection threshold this scan
 
             if half_fov is None:
                 bearing = self.radar_rng.uniform(0.0, 2 * math.pi)
             else:
                 bearing = heading + self.radar_rng.uniform(-half_fov, half_fov)
+
+            # Uniform-in-annulus-area radius sampling so clutter isn't
+            # artificially bunched near the inner or outer edge.
+            lo2, hi2 = self.radar_min_range ** 2, self.radar_max_range ** 2
+            rng_ = math.sqrt(self.radar_rng.uniform(lo2, hi2)) if hi2 > lo2 else self.radar_max_range
 
             x = uav_pos[0] + rng_ * math.cos(bearing)
             y = uav_pos[1] + rng_ * math.sin(bearing)
@@ -663,7 +393,6 @@ class RadarLikeModel:
                 "clutter_flag": True,
                 "confidence": confidence,
                 "true_confidence": confidence,
-                "_uncertainty": uncertainty,
             })
         return dets
 
@@ -713,12 +442,6 @@ class RadarLikeModel:
                         surviving = []
                         for d in base_perceived:
                             if d.get("is_phantom"):
-                                # Skips the PD gate (config-driven phantoms
-                                # aren't a real target the radar can fail
-                                # to see), but still gets an uncertainty
-                                # representation stamped on for logging,
-                                # keyed off its own reported distance.
-                                d["_uncertainty"] = self._measurement_uncertainty(d.get("distance"))
                                 surviving.append(d)
                                 continue
 
@@ -738,16 +461,7 @@ class RadarLikeModel:
                                     pd_missed_ids.append(d.get("id"))
                                     continue
 
-                            # Task 2: PD is no longer the flat config
-                            # scalar - it's this specific detection's
-                            # range/SNR/environment/reliability-adjusted
-                            # effective PD, computed once and reused below
-                            # (noise std, logged fields) so the roll and
-                            # the reported uncertainty always agree.
-                            uncertainty = self._measurement_uncertainty(true_range)
-                            d["_uncertainty"] = uncertainty
-
-                            if self.radar_rng.random() < uncertainty["pd_effective"]:
+                            if self.radar_rng.random() < self.detection_probability:
                                 surviving.append(d)
                             else:
                                 pd_missed_ids.append(d.get("id"))
@@ -858,20 +572,6 @@ class RadarLikeModel:
         measured_range = measured_bearing = measured_radial_vel = None
         confidence = None
 
-        # Task 2: the uncertainty representation. If this measurement
-        # actually happened (measured_det), reuse the exact dict computed
-        # for it in _patch_perception/_generate_clutter so logged values
-        # match what drove the noise/PD/PFA rolls. If it was missed (no
-        # measured_det but a true target existed), compute what the
-        # conditions implied anyway - useful for diagnosing *why* it was
-        # missed (e.g. low SNR at range vs. bad luck).
-        if measured_det is not None:
-            uncertainty = measured_det.get("_uncertainty")
-        elif true_range is not None:
-            uncertainty = self._measurement_uncertainty(true_range)
-        else:
-            uncertainty = None
-
         if measured_det is not None:
             detected_x = measured_det["x"]
             detected_y = measured_det["y"]
@@ -885,37 +585,16 @@ class RadarLikeModel:
 
             # Radial velocity is its own measurement channel: projected
             # along the noisy line-of-sight, using true target kinematics,
-            # plus its own independent noise (drawn from this
-            # measurement's own radial-velocity variance, so it degrades
-            # with range/SNR/environment/reliability the same as range and
-            # bearing do). No coherent Doppler for phantoms (no real
-            # target underneath).
+            # plus its own independent noise. No coherent Doppler for
+            # phantoms (no real target underneath).
             if (target_id is not None
                     and not target_id.startswith("phantom_")
                     and not target_id.startswith("clutter_")):
                 _, _, base_radial = _range_bearing_radial(
                     observer_pos, observer_vel, (detected_x, detected_y), target_vel)
                 if base_radial is not None:
-                    rv_std = (math.sqrt(uncertainty["radial_velocity_variance"])
-                              if uncertainty is not None else self.radial_velocity_noise_std)
-                    measured_radial_vel = base_radial + self.radar_rng.gauss(0.0, rv_std)
-
-        if uncertainty is not None:
-            range_variance = round(uncertainty["range_variance"], 6)
-            bearing_variance = round(uncertainty["bearing_variance"], 8)
-            radial_velocity_variance = round(uncertainty["radial_velocity_variance"], 6)
-            measurement_covariance = json.dumps([
-                [round(v, 6) for v in row] for row in uncertainty["covariance"]
-            ])
-            radar_snr_db = round(uncertainty["snr_db"], 2) if uncertainty["snr_db"] is not None else None
-            measurement_quality = round(uncertainty["quality"], 4)
-            probability_of_detection = round(uncertainty["pd_effective"], 4)
-            probability_of_false_alarm = round(uncertainty["pfa_effective"], 4)
-        else:
-            range_variance = bearing_variance = radial_velocity_variance = None
-            measurement_covariance = None
-            radar_snr_db = measurement_quality = None
-            probability_of_detection = probability_of_false_alarm = None
+                    measured_radial_vel = base_radial + self.radar_rng.gauss(
+                        0.0, self.radial_velocity_noise_std)
 
         return {
             "time_step": t,
@@ -941,17 +620,6 @@ class RadarLikeModel:
             "false_alarm_source": false_alarm_source,
             "dropout_flag": bool(dropout),
             "radar_pd_miss_flag": bool(radar_pd_miss),
-            # Task 2: probabilistic measurement uncertainty.
-            "range_variance": range_variance,
-            "bearing_variance": bearing_variance,
-            "radial_velocity_variance": radial_velocity_variance,
-            "measurement_covariance": measurement_covariance,
-            "radar_snr_db": radar_snr_db,
-            "measurement_quality": measurement_quality,
-            "probability_of_detection": probability_of_detection,
-            "probability_of_false_alarm": probability_of_false_alarm,
-            "radar_environmental_condition": self.environmental_condition,
-            "radar_reliability_state": self.radar_reliability_state,
         }
 
     def _finalize_step(self, t, pos_before, pos_after):

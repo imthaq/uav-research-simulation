@@ -40,17 +40,12 @@ TRUST_WEIGHTED_FUSION = "trust_weighted_fusion"
 # real-world object. Same spirit as radar_track_model.GATE_DISTANCE.
 CLUSTER_DISTANCE = 4.0
 
-# Track-status reliability multiplier. "tentative" tracks (not yet
-# confirmed over several hits) and "coasting" tracks (predicted forward
-# with no detection this step) are trusted less than "confirmed" ones;
-# "lost"/"deleted" tracks are on their way out and get the same low trust
-# as tentative rather than the 1.0 default.
+# Track-status reliability multiplier. A "lost" track is dropped by
+# radar_track_model before it ever reaches here; "tentative" tracks (not
+# yet confirmed over several hits) are trusted less than "confirmed" ones.
 STATUS_RELIABILITY = {
     "tentative": 0.6,
     "confirmed": 1.0,
-    "coasting": 0.4,
-    "lost": 0.1,
-    "deleted": 0.1,
 }
 
 
