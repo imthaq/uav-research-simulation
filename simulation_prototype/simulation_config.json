@@ -15,10 +15,22 @@
   "swarm": {
     "num_uavs": 4,
     "start_positions": [
-      [5.0, 5.0],
-      [5.0, 15.0],
-      [15.0, 5.0],
-      [15.0, 15.0]
+      [
+        5.0,
+        5.0
+      ],
+      [
+        5.0,
+        15.0
+      ],
+      [
+        15.0,
+        5.0
+      ],
+      [
+        15.0,
+        15.0
+      ]
     ],
     "uav_speed": 2.0,
     "desired_formation_spacing": 8.0,
@@ -64,6 +76,107 @@
     "radar_latency_steps": 0,
     "radar_dropout_probability": 0.0,
     "radar_confidence_error": 0.0
+  },
+  "environment_modes": {
+    "clear": {
+      "vision": {
+        "false_negative_rate": 0.0,
+        "position_noise_std": 0.0,
+        "confidence_error_level": 0.0,
+        "dropout_prob": 0.0
+      },
+      "radar": {
+        "radar_detection_probability": 1.0,
+        "radar_range_noise_std": 0.2,
+        "radar_false_alarm_probability": 0.0,
+        "radar_clutter_density": 0.0,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "low_visibility": {
+      "vision": {
+        "false_negative_rate": 0.35,
+        "position_noise_std": 2.0,
+        "confidence_error_level": 0.2,
+        "dropout_prob": 0.01
+      },
+      "radar": {
+        "radar_detection_probability": 0.97,
+        "radar_range_noise_std": 0.3,
+        "radar_false_alarm_probability": 0.02,
+        "radar_clutter_density": 0.2,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "fog": {
+      "vision": {
+        "false_negative_rate": 0.55,
+        "position_noise_std": 3.5,
+        "confidence_error_level": 0.3,
+        "dropout_prob": 0.04
+      },
+      "radar": {
+        "radar_detection_probability": 0.93,
+        "radar_range_noise_std": 0.4,
+        "radar_false_alarm_probability": 0.03,
+        "radar_clutter_density": 0.3,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "heavy_clutter": {
+      "vision": {
+        "false_negative_rate": 0.1,
+        "position_noise_std": 0.5,
+        "confidence_error_level": 0.05,
+        "dropout_prob": 0.0
+      },
+      "radar": {
+        "radar_detection_probability": 0.9,
+        "radar_range_noise_std": 0.35,
+        "radar_false_alarm_probability": 0.35,
+        "radar_clutter_density": 3.0,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "communication_delay": {
+      "vision": {
+        "false_negative_rate": 0.0,
+        "position_noise_std": 0.0,
+        "confidence_error_level": 0.0,
+        "dropout_prob": 0.01,
+        "latency_steps": 6
+      },
+      "radar": {
+        "radar_detection_probability": 1.0,
+        "radar_range_noise_std": 0.2,
+        "radar_false_alarm_probability": 0.0,
+        "radar_clutter_density": 0.0,
+        "radar_dropout_probability": 0.01,
+        "radar_latency_steps": 6
+      }
+    },
+    "partial_sensor_failure": {
+      "failed_sensor": "radar",
+      "vision": {
+        "false_negative_rate": 0.0,
+        "position_noise_std": 0.0,
+        "confidence_error_level": 0.0,
+        "dropout_prob": 0.0
+      },
+      "radar": {
+        "radar_detection_probability": 0.05,
+        "radar_range_noise_std": 2.0,
+        "radar_false_alarm_probability": 0.0,
+        "radar_clutter_density": 0.0,
+        "radar_dropout_probability": 0.9,
+        "radar_dropout_duration_steps": 40,
+        "radar_latency_steps": 0
+      }
+    }
   },
   "scenarios": {
     "baseline": {
@@ -155,38 +268,103 @@
       "description": "Task 7, scenario 1: a single static obstacle directly in the swarm's path - the baseline single-entity case every other multi-entity scenario below is a variation on.",
       "fusion_mode": "no_fusion",
       "entities": [
-        {"id": "obstacle_0", "kind": "static_obstacle", "x": 50.0, "y": 50.0, "radius": 5.0}
+        {
+          "id": "obstacle_0",
+          "kind": "static_obstacle",
+          "x": 50.0,
+          "y": 50.0,
+          "radius": 5.0
+        }
       ]
     },
     "multiple_obstacles": {
       "description": "Task 7, scenario 2: three static obstacles strung along the swarm's diagonal route to the rally point, forcing repeated avoidance rather than a single one-off dodge.",
       "fusion_mode": "no_fusion",
       "entities": [
-        {"id": "obstacle_0", "kind": "static_obstacle", "x": 30.0, "y": 30.0, "radius": 4.0},
-        {"id": "obstacle_1", "kind": "static_obstacle", "x": 55.0, "y": 50.0, "radius": 5.0},
-        {"id": "obstacle_2", "kind": "static_obstacle", "x": 75.0, "y": 68.0, "radius": 4.0}
+        {
+          "id": "obstacle_0",
+          "kind": "static_obstacle",
+          "x": 30.0,
+          "y": 30.0,
+          "radius": 4.0
+        },
+        {
+          "id": "obstacle_1",
+          "kind": "static_obstacle",
+          "x": 55.0,
+          "y": 50.0,
+          "radius": 5.0
+        },
+        {
+          "id": "obstacle_2",
+          "kind": "static_obstacle",
+          "x": 75.0,
+          "y": 68.0,
+          "radius": 4.0
+        }
       ]
     },
     "two_crossing_targets": {
       "description": "Task 7, scenario 3: two moving targets on paths that cross near the world center, patrolling back and forth (bounce) so the crossing recurs over the run instead of happening once.",
       "fusion_mode": "no_fusion",
       "entities": [
-        {"id": "target_0", "kind": "moving_target", "x": 10.0, "y": 90.0, "velocity": [0.9, -0.9], "bounce": true},
-        {"id": "target_1", "kind": "moving_target", "x": 10.0, "y": 10.0, "velocity": [0.9, 0.9], "bounce": true}
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 10.0,
+          "y": 90.0,
+          "velocity": [
+            0.9,
+            -0.9
+          ],
+          "bounce": true
+        },
+        {
+          "id": "target_1",
+          "kind": "moving_target",
+          "x": 10.0,
+          "y": 10.0,
+          "velocity": [
+            0.9,
+            0.9
+          ],
+          "bounce": true
+        }
       ]
     },
     "moving_obstacle_approaching_swarm": {
       "description": "Task 7, scenario 4: an obstacle starting well clear of the swarm's start cluster and moving steadily toward it, so the threat range/bearing genuinely closes over time instead of being static from step 0.",
       "fusion_mode": "no_fusion",
       "entities": [
-        {"id": "obstacle_0", "kind": "moving_obstacle", "x": 95.0, "y": 10.0, "radius": 4.0, "velocity": [-1.0, 0.0], "bounce": true}
+        {
+          "id": "obstacle_0",
+          "kind": "moving_obstacle",
+          "x": 95.0,
+          "y": 10.0,
+          "radius": 4.0,
+          "velocity": [
+            -1.0,
+            0.0
+          ],
+          "bounce": true
+        }
       ]
     },
     "target_temporarily_lost": {
       "description": "Task 7, scenario 5: a moving target that bounces back and forth vertically through x=50 (the middle of the swarm's diagonal route to the rally point), so it repeatedly sweeps into radar coverage as it crosses the corridor and back out of coverage as it moves toward y=0 or y=100 - genuinely leaving true sensor range for stretches of the run, not just suffering perception error.",
       "fusion_mode": "no_fusion",
       "entities": [
-        {"id": "target_0", "kind": "moving_target", "x": 50.0, "y": 5.0, "velocity": [0.0, 3.0], "bounce": true}
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 50.0,
+          "y": 5.0,
+          "velocity": [
+            0.0,
+            3.0
+          ],
+          "bounce": true
+        }
       ]
     },
     "target_reappearing_after_dropout": {
@@ -195,7 +373,17 @@
       "dropout_prob": 0.03,
       "dropout_duration_steps": 12,
       "entities": [
-        {"id": "target_0", "kind": "moving_target", "x": 10.0, "y": 50.0, "velocity": [0.5, 0.0], "bounce": true}
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 10.0,
+          "y": 50.0,
+          "velocity": [
+            0.5,
+            0.0
+          ],
+          "bounce": true
+        }
       ]
     },
     "clutter_near_real_target": {
@@ -204,16 +392,132 @@
       "radar_clutter_density": 2.0,
       "radar_false_alarm_probability": 0.3,
       "entities": [
-        {"id": "target_0", "kind": "moving_target", "x": 50.0, "y": 50.0, "velocity": [0.0, 0.0]}
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 50.0,
+          "y": 50.0,
+          "velocity": [
+            0.0,
+            0.0
+          ]
+        }
       ]
     },
     "closely_spaced_targets": {
       "description": "Task 7, scenario 8: two targets close enough together (8 units apart, inside sensor_range but outside safe formation spacing) to stress whether detections/tracks stay resolved as two distinct entities instead of blurring into one.",
       "fusion_mode": "no_fusion",
       "entities": [
-        {"id": "target_0", "kind": "moving_target", "x": 48.0, "y": 48.0, "velocity": [0.4, 0.4], "bounce": true},
-        {"id": "target_1", "kind": "moving_target", "x": 52.0, "y": 52.0, "velocity": [0.4, 0.4], "bounce": true}
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 48.0,
+          "y": 48.0,
+          "velocity": [
+            0.4,
+            0.4
+          ],
+          "bounce": true
+        },
+        {
+          "id": "target_1",
+          "kind": "moving_target",
+          "x": 52.0,
+          "y": 52.0,
+          "velocity": [
+            0.4,
+            0.4
+          ],
+          "bounce": true
+        }
       ]
+    },
+    "env_clear": {
+      "environment_mode": "clear",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "confidence_error_level": 0.0,
+      "dropout_prob": 0.0,
+      "radar_detection_probability": 1.0,
+      "radar_range_noise_std": 0.2,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_low_visibility": {
+      "environment_mode": "low_visibility",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "radar_detection_probability": 0.97,
+      "radar_range_noise_std": 0.3,
+      "radar_false_alarm_probability": 0.02,
+      "radar_clutter_density": 0.2,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_fog": {
+      "environment_mode": "fog",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.55,
+      "position_noise_std": 3.5,
+      "confidence_error_level": 0.3,
+      "dropout_prob": 0.04,
+      "radar_detection_probability": 0.93,
+      "radar_range_noise_std": 0.4,
+      "radar_false_alarm_probability": 0.03,
+      "radar_clutter_density": 0.3,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_heavy_clutter": {
+      "environment_mode": "heavy_clutter",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.1,
+      "position_noise_std": 0.5,
+      "confidence_error_level": 0.05,
+      "dropout_prob": 0.0,
+      "radar_detection_probability": 0.9,
+      "radar_range_noise_std": 0.35,
+      "radar_false_alarm_probability": 0.35,
+      "radar_clutter_density": 3.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_communication_delay": {
+      "environment_mode": "communication_delay",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "confidence_error_level": 0.0,
+      "dropout_prob": 0.01,
+      "latency_steps": 6,
+      "radar_detection_probability": 1.0,
+      "radar_range_noise_std": 0.2,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.01,
+      "radar_latency_steps": 6
+    },
+    "env_partial_sensor_failure": {
+      "environment_mode": "partial_sensor_failure",
+      "fusion_mode": "no_fusion",
+      "failed_sensor": "radar",
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "confidence_error_level": 0.0,
+      "dropout_prob": 0.0,
+      "radar_detection_probability": 0.05,
+      "radar_range_noise_std": 2.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.9,
+      "radar_dropout_duration_steps": 40,
+      "radar_latency_steps": 0
     }
   }
 }
