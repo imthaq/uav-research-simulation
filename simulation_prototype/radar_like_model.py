@@ -917,6 +917,10 @@ class RadarLikeModel:
             radar_snr_db = measurement_quality = None
             probability_of_detection = probability_of_false_alarm = None
 
+        # Validity: a measurement is valid if it was actually detected/measured
+        is_valid = measured_det is not None and not dropout
+        sensor_reliability = measurement_quality if measurement_quality is not None else 0.0
+        
         return {
             "time_step": t,
             "radar_id": uav_id,
@@ -948,6 +952,8 @@ class RadarLikeModel:
             "measurement_covariance": measurement_covariance,
             "radar_snr_db": radar_snr_db,
             "measurement_quality": measurement_quality,
+            "sensor_reliability": round(sensor_reliability, 4),
+            "validity_flag": bool(is_valid),
             "probability_of_detection": probability_of_detection,
             "probability_of_false_alarm": probability_of_false_alarm,
             "radar_environmental_condition": self.environmental_condition,
