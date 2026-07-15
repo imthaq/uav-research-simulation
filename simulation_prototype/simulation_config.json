@@ -40,7 +40,8 @@
     "dt": 0.2,
     "max_steps": 600,
     "duration_seconds": 120.0,
-    "seed": 42
+    "seed": 42,
+    "fusion_update_rate": 5.0
   },
   "sensing": {
     "sensor_range": 15.0,
@@ -518,6 +519,82 @@
       "radar_dropout_probability": 0.9,
       "radar_dropout_duration_steps": 40,
       "radar_latency_steps": 0
+    },
+    "perfect_communication": {
+      "description": "Communication test: no packet loss, no delay, no range limit.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "perfect"
+      }
+    },
+    "low_packet_loss": {
+      "description": "Communication test: 5% packet loss, 2% corruption, 1-step hop delay.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "low_packet_loss"
+      }
+    },
+    "high_packet_loss": {
+      "description": "Communication test: 40% packet loss, 10% corruption, 1-step hop delay.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "high_packet_loss"
+      }
+    },
+    "short_communication_range": {
+      "description": "Communication test: 5-unit comm range - out-of-range UAV pairs can't share tracks.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "short_range"
+      }
+    },
+    "delayed_track_sharing": {
+      "description": "Communication test: 5-step hop delay, otherwise reliable.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "delayed_sharing"
+      }
+    },
+    "communication_outage": {
+      "description": "Communication test: complete temporary outage - every broadcast lost.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "outage"
+      }
     }
+  },
+  "vision": {
+    "vision_update_rate": 5.0
+  },
+  "lidar": {
+    "lidar_update_rate": 1.67
+  },
+  "communication": {
+    "preset": "perfect",
+    "packet_loss_probability": 0.0,
+    "comm_range": null,
+    "base_latency_steps": 0,
+    "max_staleness_steps": null,
+    "corruption_probability": 0.0,
+    "central_uplink_latency_steps": 1,
+    "central_downlink_latency_steps": 1
   }
 }

@@ -26,6 +26,10 @@ class LiDARLikeModel:
     DEFAULT_RANGE_NOISE_STD = 0.08
     DEFAULT_POSITION_NOISE_STD = 0.15
     DEFAULT_ANGULAR_NOISE_STD = 0.03
+
+    # Asynchronous update rate (Hz). LiDAR defaults slower than vision
+    # (dt=0.2s -> ~1.67Hz, roughly every 3 steps).
+    DEFAULT_UPDATE_RATE = 1.67
     
     # Weather heavily impacts LiDAR (rain/snow dropout)
     ENV_FACTORS = {
@@ -75,7 +79,16 @@ class LiDARLikeModel:
         
         self._env_factors = self.ENV_FACTORS.get(self.environmental_condition, self.ENV_FACTORS["clear"])
         self._reliability_factors = self.RELIABILITY_FACTORS.get(self.reliability_state, self.RELIABILITY_FACTORS["nominal"])
-        
+
+        # Asynchronous update rate: scenario override -> top-level "lidar"
+        # config section -> built-in default.
+        self.update_rate = scn.get("lidar_update_rate",
+                                  lidar_cfg.get("lidar_update_rate", self.DEFAULT_UPDATE_RATE))
+        self.update_interval_steps = (
+            max(1, round(1.0 / (self.update_rate * self.dt))) if self.update_rate > 0 else 1)
+        self._held_rows = {}
+        self._held_step = {}
+
         self.rows = []
     
     def _compute_covariance(self, true_range):
@@ -96,10 +109,14 @@ class LiDARLikeModel:
         dx, dy = gx - uav_pos[0], gy - uav_pos[1]
         return math.atan2(dy, dx) if (abs(dx) > 1e-9 or abs(dy) > 1e-9) else 0.0
     
-    def _make_lidar_row(self, t, uav_id, true_det, measured_x, measured_y, 
+    def _make_lidar_row(self, t, uav_id, true_det, measured_x, measured_y,
                        measured_range, measured_bearing, observer_pos,
-                       confidence, covariance, is_valid, dropout_reason=None):
-        """Construct a LiDAR measurement row."""
+                       confidence, covariance, is_valid, dropout_reason=None,
+                       timestamp=None, measurement_age_steps=0, is_stale=False):
+        """Construct a LiDAR measurement row.
+
+        timestamp/measurement_age_steps/is_stale mirror
+        vision_like_model.py's asynchronous-update fields."""
         target_id = true_det["id"] if true_det is not None else None
         
         true_x = true_det["x"] if true_det is not None else None
@@ -131,6 +148,9 @@ class LiDARLikeModel:
             "dropout_reason": dropout_reason,
             "lidar_environmental_condition": self.environmental_condition,
             "lidar_reliability_state": self.reliability_state,
+            "timestamp": timestamp if timestamp is not None else t,
+            "measurement_age_steps": measurement_age_steps,
+            "is_stale": bool(is_stale),
         }
     
     def run(self):
@@ -150,20 +170,40 @@ class LiDARLikeModel:
             for uav_id in range(self.sim.num_uavs):
                 if self.sim.reached_goal[uav_id]:
                     continue
-                
+
+                # Asynchronous update rate: only generate a fresh LiDAR
+                # scan on steps due for one; otherwise re-serve the last
+                # generated scan, stamped stale with its growing age.
+                if t % self.update_interval_steps != 0:
+                    held = self._held_rows.get(uav_id)
+                    if held is not None:
+                        gen_t = self._held_step[uav_id]
+                        for row in held:
+                            stale_row = dict(row)
+                            stale_row["time_step"] = t
+                            stale_row["measurement_age_steps"] = t - gen_t
+                            stale_row["is_stale"] = True
+                            self.rows.append(stale_row)
+                    continue
+
                 uav_pos = self.sim.pos[uav_id]
                 heading = self._heading(uav_id, uav_pos)
                 
                 # Get true detections
                 true_dets = self.sim._true_detections_for(uav_id)
-                
+
+                frame_rows = []
+
                 # Check for scan-level dropout first (weather or hardware)
                 if weather_dropout:
                     # Report all true targets as undetected due to weather
                     for true_det in true_dets:
-                        self.rows.append(self._make_lidar_row(
+                        frame_rows.append(self._make_lidar_row(
                             t, uav_id, true_det, None, None, None, None,
                             uav_pos, None, None, False, "weather_dropout"))
+                    self._held_rows[uav_id] = frame_rows
+                    self._held_step[uav_id] = t
+                    self.rows.extend(frame_rows)
                     continue
                 
                 # Process real targets in range/FOV
@@ -174,7 +214,7 @@ class LiDARLikeModel:
                     
                     # Range gate (LiDAR has both min and max range)
                     if true_range > self.max_range or true_range < self.min_range:
-                        self.rows.append(self._make_lidar_row(
+                        frame_rows.append(self._make_lidar_row(
                             t, uav_id, true_det, None, None, None, None,
                             uav_pos, None, None, False, "range_gate"))
                         continue
@@ -184,7 +224,7 @@ class LiDARLikeModel:
                         true_bearing = math.atan2(dy, dx)
                         angle_diff = abs(_wrap_angle(true_bearing - heading))
                         if angle_diff > half_fov:
-                            self.rows.append(self._make_lidar_row(
+                            frame_rows.append(self._make_lidar_row(
                                 t, uav_id, true_det, None, None, None, None,
                                 uav_pos, None, None, False, "fov_gate"))
                             continue
@@ -195,7 +235,7 @@ class LiDARLikeModel:
                              self._reliability_factors["pd_mult"])
                     
                     if self.lidar_rng.random() > pd_eff:
-                        self.rows.append(self._make_lidar_row(
+                        frame_rows.append(self._make_lidar_row(
                             t, uav_id, true_det, None, None, None, None,
                             uav_pos, None, None, False, "detection_miss"))
                         continue
@@ -220,10 +260,14 @@ class LiDARLikeModel:
                     confidence = 0.94 * pd_eff
                     covariance = self._compute_covariance(true_range)
                     
-                    self.rows.append(self._make_lidar_row(
+                    frame_rows.append(self._make_lidar_row(
                         t, uav_id, true_det, meas_x, meas_y, meas_range, meas_bearing,
                         uav_pos, confidence, covariance, True))
-        
+
+                self._held_rows[uav_id] = frame_rows
+                self._held_step[uav_id] = t
+                self.rows.extend(frame_rows)
+
         return self.rows
 
 

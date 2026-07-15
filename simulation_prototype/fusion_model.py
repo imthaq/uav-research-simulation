@@ -181,19 +181,27 @@ creates one per (scenario, architecture) run when trust_adaptation is
 enabled (on by default; see "trust_adaptation" config block / --disable-
 adaptive-trust) and carries it across every step of that run, exactly the
 way a real onboard trust estimator would persist across a mission rather
-than resetting every step.
+than resetting every step. It composes with, and is independent of, both
+existing rate/reliability layers: communication.max_staleness_steps still
+hard-rejects sources outright before trust ever sees them, and the
+per-step communication channel (packet loss / range / corruption) still
+governs which distributed broadcasts even arrive - persistent_trust only
+adjusts how much a source that *did* arrive and pass staleness rejection
+gets weighted.
 """
 
 import argparse
 import csv
 import json
 import math
+import random
 from collections import deque
 
 import numpy as np
 
 from radar_like_model import RadarLikeModel
 from radar_track_model import build_tracks
+import communication_model
 
 NO_FUSION = "no_fusion"
 NAIVE_FUSION = "naive_fusion"
@@ -735,7 +743,7 @@ def fuse_centralized(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
                       sensor_latency_steps=0, sensor_dropout_probability=0.0,
                       uplink_latency_steps=CENTRAL_UPLINK_LATENCY_STEPS,
                       downlink_latency_steps=CENTRAL_DOWNLINK_LATENCY_STEPS,
-                      trust_tracker=None):
+                      max_staleness_steps=None, trust_tracker=None):
     """Centralized architecture: every UAV's track is treated as already
     having arrived at one central fusion node (that's what building
     `radar_tracks` as a single pooled list already represents), fused
@@ -751,10 +759,17 @@ def fuse_centralized(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
                              (the max across sources, since the center
                              can't finish until its slowest input arrives).
 
+    max_staleness_steps, if given, hard-rejects any source whose
+    measurement_age_steps exceeds it before fusing - the "latest available
+    measurements ... stale-data rejection" half of asynchronous multi-rate
+    sensing, on top of the soft age_discount reliability already applies.
+
     `trust_tracker`, if given, both supplies this step's persistent_trust
     (folded into each source's reliability before fusing) and gets
     updated afterwards from this step's agreement/freshness/dropout/
-    confidence/covariance signals, ready for next step.
+    confidence/covariance signals - computed only from the sources that
+    actually took part in this round (i.e. after max_staleness_steps
+    rejection), ready for next step.
 
     Returns one row per fused object (same shape fuse_step always
     returned), each carrying architecture/comm/response_time fields.
@@ -763,6 +778,8 @@ def fuse_centralized(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
         raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
 
     sources = _sources_with_trust(radar_tracks, sensor_latency_steps, sensor_dropout_probability, trust_tracker)
+    if max_staleness_steps is not None:
+        sources = [s for s in sources if s["measurement_age_steps"] <= max_staleness_steps]
     fused = _fuse_sources(sources, fusion_mode, cluster_distance)
 
     num_uavs_reporting = len(sources)
@@ -784,19 +801,24 @@ def fuse_distributed(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
                       sensor_latency_steps=0, sensor_dropout_probability=0.0,
                       comm_drop_probability=COMM_DROP_PROBABILITY,
                       hop_latency_steps=DISTRIBUTED_HOP_LATENCY_STEPS,
-                      rng=None, trust_tracker=None):
+                      channel=None, rng=None, trust_tracker=None):
     """Distributed architecture: no central node. Every UAV that produced
-    a track broadcasts it to every other UAV; each such broadcast is an
-    independent peer-to-peer message that can be lost with probability
-    comm_drop_probability. Each UAV then fuses *its own* track together
-    with whatever peers' tracks actually arrived - so different UAVs can
-    end up with different local estimates of the same object this step.
+    a track broadcasts it to every other UAV over `channel` (a
+    communication_model.CommunicationChannel - built from
+    comm_drop_probability/hop_latency_steps if not given, for backward
+    compatibility). Each such broadcast can be lost to packet loss, be
+    out of range, or be rejected as stale by the channel; each UAV then
+    fuses *its own* track together with whatever peers' tracks actually
+    arrived - so different UAVs can end up with different local estimates
+    of the same object this step.
 
     `trust_tracker`, if given, supplies persistent_trust for every UAV's
     track (looked up once, shared across every receiver's local fuse -
     trust is a property of the sensor, not of who's currently listening
     to it) and is updated once per step from the full swarm-wide
-    agreement picture, not separately per receiver.
+    agreement picture (every source that produced a track this step, not
+    just what a given receiver happened to have delivered to it), not
+    separately per receiver.
 
     Returns one row per (uav_id, fused object) - i.e. potentially several
     rows per object, one per UAV's local view of it - each carrying
@@ -807,6 +829,10 @@ def fuse_distributed(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
         raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
 
     rng = rng or np.random.default_rng()
+    channel = channel or communication_model.CommunicationChannel(
+        packet_loss_probability=comm_drop_probability,
+        base_latency_steps=hop_latency_steps,
+        rng=random.Random(int(rng.integers(0, 2**31 - 1))))
     all_sources = _sources_with_trust(radar_tracks, sensor_latency_steps, sensor_dropout_probability, trust_tracker)
     if not all_sources:
         return []
@@ -826,15 +852,17 @@ def fuse_distributed(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
         for s in all_sources:
             if s["radar_id"] == receiver_id:
                 continue
-            if rng.random() >= comm_drop_probability:  # broadcast survives
-                received_from_peers.append(s)
+            delivered, outcome = channel.transmit(
+                s, measurement_age_steps=s["measurement_age_steps"])
+            if outcome == "delivered":
+                received_from_peers.append(delivered)
                 delivered_messages += 1
         local_sources = own + received_from_peers
         for row in _fuse_sources(local_sources, fusion_mode, cluster_distance):
             row["architecture"] = ARCHITECTURE_DISTRIBUTED
             row["local_uav_id"] = receiver_id
             row["comm_messages"] = attempted_messages
-            row["response_time_steps"] = sensor_latency_steps + hop_latency_steps
+            row["response_time_steps"] = sensor_latency_steps + channel.base_latency_steps
             fused_rows.append(row)
 
     for row in fused_rows:
@@ -891,15 +919,34 @@ def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED
     (uav_id, fused object) per step for "distributed" (see fuse_step /
     fuse_distributed).
 
+    Two asynchronous-rate knobs, read from config["communication"] /
+    config["sim"]:
+      - fusion_update_rate (Hz) - fusion only actually recomputes on
+        steps due for one (default: every step); steps in between re-serve
+        the last computed result, marked `is_stale`/`fusion_age_steps` -
+        "latest available measurements" for a fusion stage slower than the
+        sim's own step rate, mirroring how radar/vision/LiDAR each hold
+        their own last scan between updates.
+      - communication.max_staleness_steps - hard-rejects any source too
+        old to trust regardless of soft reliability discounting (Task 8's
+        "stale-data rejection"); communication.preset/packet_loss_*/
+        comm_range/corruption_probability configure the actual channel
+        messages travel over (see communication_model.py).
+
     `seed` seeds the distributed architecture's communication-drop RNG so
-    runs are reproducible; ignored for "centralized" (which has no random
-    communication model today).
+    runs are reproducible; ignored for "centralized".
 
     `use_adaptive_trust` controls whether a TrustTracker is created and
     carried across every step of this run (see "Dynamic trust
-    adaptation" in the module docstring). It's on by default; set False
-    to reproduce pre-Task-14 behavior (persistent_trust fixed at 1.0
-    everywhere).
+    adaptation" in the module docstring). On by default; a
+    config["trust_adaptation"] block can further tune it or disable it
+    per scenario via {"enabled": false} - set use_adaptive_trust=False to
+    disable it for the whole call regardless of config, reproducing
+    pre-Task-14 behavior (persistent_trust fixed at 1.0 everywhere). A
+    fusion stage that only recomputes every fusion_update_interval_steps
+    only feeds the tracker on the steps it actually runs, exactly like a
+    real onboard trust estimator that only has something new to learn
+    from on those same steps.
     """
     model = RadarLikeModel(config, scenario_name)
     detection_rows = model.run()
@@ -909,23 +956,34 @@ def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED
     fusion_mode = model.sim.scn.get(
         "fusion_mode", config.get("perception_errors", {}).get("fusion_mode", NO_FUSION))
 
-    comm_cfg = config.get("communication", {})
-    architecture_kwargs = {}
+    comm_cfg = model.sim.scn.get("communication", config.get("communication", {}))
+    channel_rng = random.Random(seed)
+    architecture_kwargs = {"max_staleness_steps": comm_cfg.get("max_staleness_steps")}
     if architecture == ARCHITECTURE_CENTRALIZED:
         architecture_kwargs["uplink_latency_steps"] = comm_cfg.get(
             "central_uplink_latency_steps", CENTRAL_UPLINK_LATENCY_STEPS)
         architecture_kwargs["downlink_latency_steps"] = comm_cfg.get(
             "central_downlink_latency_steps", CENTRAL_DOWNLINK_LATENCY_STEPS)
     else:
-        architecture_kwargs["comm_drop_probability"] = comm_cfg.get(
-            "comm_drop_probability", COMM_DROP_PROBABILITY)
-        architecture_kwargs["hop_latency_steps"] = comm_cfg.get(
-            "distributed_hop_latency_steps", DISTRIBUTED_HOP_LATENCY_STEPS)
+        del architecture_kwargs["max_staleness_steps"]  # folded into the channel itself below
+        architecture_kwargs["channel"] = communication_model.from_config(
+            comm_cfg, rng=random.Random(channel_rng.randint(0, 2**31 - 1)))
         architecture_kwargs["rng"] = np.random.default_rng(seed)
+
+    fusion_update_rate = config.get("sim", {}).get("fusion_update_rate", 0) or comm_cfg.get(
+        "fusion_update_rate", 0)
+    # Distributed peer-to-peer exchange has its own cadence, separate from
+    # how often the centralized round trip happens - falls back to
+    # fusion_update_rate if not set, since in both cases "not due yet"
+    # means the same thing: hold and re-serve the last computed result.
+    if architecture == ARCHITECTURE_DISTRIBUTED and comm_cfg.get("communication_update_rate"):
+        fusion_update_rate = comm_cfg["communication_update_rate"]
+    fusion_update_interval_steps = (
+        max(1, round(1.0 / (fusion_update_rate * dt))) if fusion_update_rate else 1)
 
     trust_tracker = None
     if use_adaptive_trust:
-        trust_cfg = config.get("trust_adaptation", {})
+        trust_cfg = model.sim.scn.get("trust_adaptation", config.get("trust_adaptation", {}))
         if trust_cfg.get("enabled", True):
             trust_tracker = TrustTracker(
                 alpha_up=trust_cfg.get("alpha_up", TRUST_ALPHA_UP),
@@ -942,12 +1000,20 @@ def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED
         by_step.setdefault(row["time_step"], []).append(row)
 
     fused_rows = []
+    held_fused, held_step = None, None
     for step in sorted(by_step):
-        for f in fuse_step(by_step[step], fusion_mode,
-                            sensor_latency_steps=model.radar_latency_steps,
-                            sensor_dropout_probability=model.radar_dropout_probability,
-                            architecture=architecture, trust_tracker=trust_tracker,
-                            **architecture_kwargs):
+        if step % fusion_update_interval_steps == 0:
+            fused = fuse_step(by_step[step], fusion_mode,
+                               sensor_latency_steps=model.radar_latency_steps,
+                               sensor_dropout_probability=model.radar_dropout_probability,
+                               architecture=architecture, trust_tracker=trust_tracker,
+                               **architecture_kwargs)
+            held_fused, held_step = fused, step
+            is_stale = False
+        else:
+            fused, is_stale = (held_fused or []), True
+
+        for f in fused:
             fused_rows.append({
                 "scenario": scenario_name,
                 "time_step": step,
@@ -964,6 +1030,8 @@ def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED
                 "comm_messages_delivered": f.get("comm_messages_delivered"),
                 "response_time_steps": f.get("response_time_steps"),
                 "source_track_ids": ";".join(f["source_ids"]),
+                "is_stale": is_stale,
+                "fusion_age_steps": (step - held_step) if held_step is not None else 0,
             })
     return fused_rows
 

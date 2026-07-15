@@ -25,6 +25,10 @@ class VisionLikeModel:
     DEFAULT_FALSE_POS_RATE = 0.02
     DEFAULT_POSITION_NOISE_STD = 0.5
     DEFAULT_HEADING_NOISE_STD = 0.1
+
+    # Asynchronous update rate (Hz). Vision defaults to updating every
+    # simulation step (dt=0.2s -> 5Hz), unlike radar's slower scan rate.
+    DEFAULT_UPDATE_RATE = 5.0
     
     ENV_FACTORS = {
         "clear": {"attenuation": 0.0, "noise_mult": 1.0, "pd_mult": 1.0, "fp_mult": 1.0},
@@ -71,7 +75,18 @@ class VisionLikeModel:
         
         self._env_factors = self.ENV_FACTORS.get(self.environmental_condition, self.ENV_FACTORS["clear"])
         self._reliability_factors = self.RELIABILITY_FACTORS.get(self.reliability_state, self.RELIABILITY_FACTORS["nominal"])
-        
+
+        # Asynchronous update rate: scenario override -> top-level "vision"
+        # config section -> built-in default (every step).
+        self.update_rate = scn.get("vision_update_rate",
+                                  vision_cfg.get("vision_update_rate", self.DEFAULT_UPDATE_RATE))
+        self.update_interval_steps = (
+            max(1, round(1.0 / (self.update_rate * self.dt))) if self.update_rate > 0 else 1)
+        # Per-UAV hold buffer: (last generated step, list of rows produced
+        # that step) - re-served on steps that fall between updates.
+        self._held_rows = {}
+        self._held_step = {}
+
         self.rows = []
     
     def _compute_confidence(self, true_range, snr_factor, lighting_quality):
@@ -97,10 +112,17 @@ class VisionLikeModel:
         dx, dy = gx - uav_pos[0], gy - uav_pos[1]
         return math.atan2(dy, dx) if (abs(dx) > 1e-9 or abs(dy) > 1e-9) else 0.0
     
-    def _make_vision_row(self, t, uav_id, true_det, measured_x, measured_y, 
+    def _make_vision_row(self, t, uav_id, true_det, measured_x, measured_y,
                         measured_bearing, observer_pos, confidence, covariance,
-                        is_valid, is_clutter):
-        """Construct a vision measurement row."""
+                        is_valid, is_clutter, timestamp=None, measurement_age_steps=0,
+                        is_stale=False):
+        """Construct a vision measurement row.
+
+        timestamp is the step this measurement was actually generated
+        (differs from `t` on held/re-served steps between updates);
+        measurement_age_steps = t - timestamp; is_stale marks a re-served
+        (not freshly generated) row, for asynchronous-fusion staleness
+        checks downstream."""
         target_id = true_det["id"] if true_det is not None else None
         
         true_x = true_det["x"] if true_det is not None else None
@@ -129,6 +151,9 @@ class VisionLikeModel:
             "is_clutter": bool(is_clutter),
             "vision_environmental_condition": self.environmental_condition,
             "vision_reliability_state": self.reliability_state,
+            "timestamp": timestamp if timestamp is not None else t,
+            "measurement_age_steps": measurement_age_steps,
+            "is_stale": bool(is_stale),
         }
     
     def run(self):
@@ -146,15 +171,30 @@ class VisionLikeModel:
             for uav_id in range(self.sim.num_uavs):
                 if self.sim.reached_goal[uav_id]:
                     continue
-                
+
+                # Asynchronous update rate: only generate a fresh vision
+                # frame on steps due for one; otherwise re-serve the last
+                # generated frame, stamped stale with its growing age.
+                if t % self.update_interval_steps != 0:
+                    held = self._held_rows.get(uav_id)
+                    if held is not None:
+                        gen_t = self._held_step[uav_id]
+                        for row in held:
+                            stale_row = dict(row)
+                            stale_row["time_step"] = t
+                            stale_row["measurement_age_steps"] = t - gen_t
+                            stale_row["is_stale"] = True
+                            self.rows.append(stale_row)
+                    continue
+
                 uav_pos = self.sim.pos[uav_id]
                 heading = self._heading(uav_id, uav_pos)
                 
                 # Get true detections for logging
                 true_dets = self.sim._true_detections_for(uav_id)
-                perceived = self.sim.perception[uav_id].detections
-                perceived_ids = {d["id"] for d in perceived}
-                
+
+                frame_rows = []
+
                 # Process real targets in FOV
                 for true_det in true_dets:
                     tx, ty = true_det["x"], true_det["y"]
@@ -163,7 +203,7 @@ class VisionLikeModel:
                     
                     # Range gate
                     if true_range > self.max_range or true_range < 0.1:
-                        self.rows.append(self._make_vision_row(
+                        frame_rows.append(self._make_vision_row(
                             t, uav_id, true_det, None, None, None,
                             uav_pos, None, None, False, False))
                         continue
@@ -172,14 +212,14 @@ class VisionLikeModel:
                     true_bearing = math.atan2(dy, dx)
                     angle_diff = abs(_wrap_angle(true_bearing - heading))
                     if angle_diff > half_fov:
-                        self.rows.append(self._make_vision_row(
+                        frame_rows.append(self._make_vision_row(
                             t, uav_id, true_det, None, None, None,
                             uav_pos, None, None, False, False))
                         continue
                     
                     # Occlusion (random)
                     if self.vision_rng.random() < 0.08:
-                        self.rows.append(self._make_vision_row(
+                        frame_rows.append(self._make_vision_row(
                             t, uav_id, true_det, None, None, None,
                             uav_pos, None, None, False, False))
                         continue
@@ -191,7 +231,7 @@ class VisionLikeModel:
                              self._env_factors["pd_mult"] * self._reliability_factors["pd_mult"])
                     
                     if self.vision_rng.random() > pd_eff:
-                        self.rows.append(self._make_vision_row(
+                        frame_rows.append(self._make_vision_row(
                             t, uav_id, true_det, None, None, None,
                             uav_pos, None, None, False, False))
                         continue
@@ -204,7 +244,7 @@ class VisionLikeModel:
                     confidence = self._compute_confidence(true_range, snr_factor, lighting_quality)
                     covariance = self._compute_covariance(true_range)
                     
-                    self.rows.append(self._make_vision_row(
+                    frame_rows.append(self._make_vision_row(
                         t, uav_id, true_det, meas_x, meas_y, meas_bearing,
                         uav_pos, confidence, covariance, True, False))
                 
@@ -219,10 +259,14 @@ class VisionLikeModel:
                     fp_bearing = theta
                     
                     covariance = self._compute_covariance(r)
-                    self.rows.append(self._make_vision_row(
+                    frame_rows.append(self._make_vision_row(
                         t, uav_id, None, fp_x, fp_y, fp_bearing,
                         uav_pos, 0.5, covariance, True, True))
-        
+
+                self._held_rows[uav_id] = frame_rows
+                self._held_step[uav_id] = t
+                self.rows.extend(frame_rows)
+
         return self.rows
 
 
