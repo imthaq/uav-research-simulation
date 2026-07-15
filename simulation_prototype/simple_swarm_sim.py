@@ -20,6 +20,16 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def _covariance_trace(track_row):
+    """Sum of the Kalman filter's diagonal state-covariance terms (pos_x,
+    pos_y, vel_x, vel_y uncertainty) for one track row, or None if no
+    track is active this step."""
+    if not track_row or not track_row.get("covariance"):
+        return None
+    mat = json.loads(track_row["covariance"])
+    return round(sum(mat[i][i] for i in range(len(mat))), 4)
+
+
 class Perception:
     """Corrupts ground-truth detections into what a UAV actually perceives,
     and attaches a (possibly miscalibrated) confidence value to each one."""
@@ -1065,6 +1075,13 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
                 "mission_success_flag": bool(log_row["mission_completed_flag"]),
                 "formation_error": (round(formation_error_this_step, 4)
                                     if formation_error_this_step is not None else None),
+                "track_covariance_trace": _covariance_trace(obs_track_row),
+                "track_est_vx": obs_track_row.get("est_vx") if obs_track_row else None,
+                "track_est_vy": obs_track_row.get("est_vy") if obs_track_row else None,
+                "fusion_num_sources": fused.get("num_sources") if fused else None,
+                "fusion_position_variance": fused.get("position_variance") if fused else None,
+                "fusion_comm_messages": fused.get("comm_messages") if fused else None,
+                "fusion_response_time_steps": fused.get("response_time_steps") if fused else None,
             })
 
     metrics = sim._metrics(t)
