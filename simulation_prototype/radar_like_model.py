@@ -342,6 +342,19 @@ class RadarLikeModel:
         self.radar_confidence_error = scn.get(
             "radar_confidence_error", radar_cfg.get("radar_confidence_error", self.DEFAULT_CONFIDENCE_ERROR))
 
+        # Task 15: single-sensor fault injection. One specific UAV's radar
+        # (faulty_uav_id) reports a systematic position bias while its
+        # confidence is forced high, independent of the swarm-wide
+        # noise/confidence knobs above and of the physics-derived
+        # measurement covariance (which stays "normal" since it's still
+        # computed from true_range). That's the point: this sensor looks
+        # fine on every self-reported signal (confidence, covariance) while
+        # actually being wrong - off by default (faulty_uav_id=None).
+        self.faulty_uav_id = scn.get("faulty_uav_id", radar_cfg.get("faulty_uav_id"))
+        self.faulty_position_bias = scn.get(
+            "faulty_position_bias", radar_cfg.get("faulty_position_bias", [0.0, 0.0]))
+        self.faulty_confidence = scn.get("faulty_confidence", radar_cfg.get("faulty_confidence"))
+
         # Task 2: probabilistic measurement uncertainty. Scenario override
         # -> top-level "radar" config section -> built-in default, same
         # pattern as every other radar_* key above.
@@ -545,6 +558,24 @@ class RadarLikeModel:
         """Per-scan probability of a total radar blackout, independent of
         the base Perception model's own dropout_prob."""
         return self.radar_rng.random() < self.radar_dropout_probability
+
+    def _apply_faulty_sensor(self, scan, uav_id):
+        """Task 15: overconfident faulty-sensor scenario. If uav_id is the
+        configured faulty_uav_id, its real (non-phantom) detections get a
+        systematic position bias applied on top of whatever noise already
+        ran, then have their confidence forced high - after
+        _apply_confidence_error, so the override always wins regardless of
+        miscalibration. No-op for every other UAV."""
+        if self.faulty_uav_id is None or uav_id != self.faulty_uav_id:
+            return
+        bx, by = self.faulty_position_bias
+        for d in scan:
+            if d.get("is_phantom"):
+                continue
+            d["x"] += bx
+            d["y"] += by
+            if self.faulty_confidence is not None:
+                d["confidence"] = self.faulty_confidence
 
     def _apply_confidence_error(self, perceived):
         """Extra Gaussian confidence miscalibration applied at the
@@ -757,6 +788,7 @@ class RadarLikeModel:
                             self._apply_radar_noise(d, uav_pos, true_by_id)
 
                         self._apply_confidence_error(scan)
+                        self._apply_faulty_sensor(scan, _uav_id)
 
                         # Task 6: radar false alarms / clutter - generated
                         # fresh every step, independent of the config-driven

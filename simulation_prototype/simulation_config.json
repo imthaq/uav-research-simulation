@@ -259,11 +259,14 @@
       "fusion_mode": "naive_fusion"
     },
     "trust_weighted_fusion": {
-      "description": "Same error conditions as naive_fusion, but fused using each UAV's confidence as a trust weight.",
+      "description": "Same error conditions as naive_fusion, but fused using each UAV's confidence as a trust weight. (fixed/static trust weighting - trust_adaptation disabled, unchanged from pre-Task-15 behavior).",
       "false_negative_rate": 0.2,
       "position_noise_std": 1.5,
       "confidence_error_level": 0.15,
-      "fusion_mode": "trust_weighted_fusion"
+      "fusion_mode": "trust_weighted_fusion",
+      "trust_adaptation": {
+        "enabled": false
+      }
     },
     "one_uav_obstacle": {
       "description": "Task 7, scenario 1: a single static obstacle directly in the swarm's path - the baseline single-entity case every other multi-entity scenario below is a variation on.",
@@ -579,6 +582,157 @@
       "communication": {
         "preset": "outage"
       }
+    },
+    "faulty_sensor_naive_fusion": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: UAV 0's radar is overconfident-but-wrong - reports the obstacle 5 world units off from its true position at 0.97 forced confidence, every other UAV senses at clean baseline accuracy. Fused with unweighted (naive) averaging, so the bad report just pulls the average toward itself, same weight as everyone else.",
+      "fusion_mode": "naive_fusion"
+    },
+    "faulty_sensor_confidence_weighted_fusion": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup as faulty_sensor_naive_fusion, fused by confidence-weighted averaging - the faulty sensor's forced-high confidence makes it actively dominate the fused estimate, worse than naive.",
+      "fusion_mode": "confidence_weighted_fusion"
+    },
+    "faulty_sensor_trust_weighted_fusion_fixed": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup, fused by trust-weighted averaging with trust_adaptation disabled (fixed trust) - reliability is derived from this step's confidence/status/covariance only, all of which the faulty sensor still self-reports as fine, so it isn't discounted.",
+      "fusion_mode": "trust_weighted_fusion",
+      "trust_adaptation": {
+        "enabled": false
+      }
+    },
+    "faulty_sensor_trust_weighted_fusion_dynamic": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup, fused by trust-weighted averaging with trust_adaptation enabled (dynamic trust) - TrustTracker watches this sensor's position disagree with the rest of the swarm step after step and lowers its persistent trust over the run, independent of its self-reported confidence.",
+      "fusion_mode": "trust_weighted_fusion",
+      "trust_adaptation": {
+        "enabled": true
+      }
+    },
+    "faulty_sensor_covariance_weighted_fusion": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup, fused by covariance-weighted (information) fusion - the faulty sensor's reported covariance is still physics-derived from true_range (unaffected by the position bias), so it looks just as tight/trustworthy as a working sensor and isn't discounted either.",
+      "fusion_mode": "covariance_weighted_fusion"
     }
   },
   "vision": {

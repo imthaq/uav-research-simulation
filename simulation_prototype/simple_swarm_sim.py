@@ -897,7 +897,7 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
     """
     from radar_like_model import RadarLikeModel, _range_bearing_radial
     from radar_track_model import RadarTracker
-    from fusion_model import fuse_step
+    from fusion_model import fuse_step, TrustTracker
 
     model = RadarLikeModel(config, scenario_name)
     sim = model.sim
@@ -908,6 +908,15 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
     obstacle_track_id = {}   # uav_id -> track_id currently believed to be the obstacle
     pending_estimates = {}   # last step's fused_by_uav, applied to this step's decision
     rows = []
+
+    # Task 15: dynamic trust adaptation was previously only wired into
+    # fusion_model.build_fused_log's offline evaluation path, never into
+    # the live decision loop below - so trust_weighted_fusion here always
+    # ran with persistent_trust fixed at 1.0 ("fixed" trust-weighting),
+    # regardless of config. Same trust_adaptation.enabled config key as
+    # build_fused_log; defaults on.
+    trust_cfg = sim.scn.get("trust_adaptation", config.get("trust_adaptation", {}))
+    trust_tracker = TrustTracker() if trust_cfg.get("enabled", True) else None
 
     t = 0
     for t in range(sim.max_steps):
@@ -958,7 +967,8 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
                 obstacle_track_row_by_uav[i] = obs_row
 
         # 7: fuse this step's obstacle tracks across UAVs.
-        fused_clusters = fuse_step(list(obstacle_track_row_by_uav.values()), fusion_mode)
+        fused_clusters = fuse_step(list(obstacle_track_row_by_uav.values()), fusion_mode,
+                                    trust_tracker=trust_tracker)
         track_id_to_uav = {tid: uav for uav, tid in obstacle_track_id.items()}
         fused_by_uav = {}
         for cluster in fused_clusters:
