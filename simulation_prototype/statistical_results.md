@@ -1,123 +1,67 @@
 # Statistical Analysis of Multi-UAV Swarm Fusion Performance
 
+## 1. Experimental Design
 
-## 1. Experimental Design & Metrics
+Three fusion paradigms were compared using a matched-parameter scenario trio (`no_fusion_matched`, `naive_fusion`, `trust_weighted_fusion`), each run for N=20 trials (seeds 42–61) under identical perturbation (`false_negative_rate=0.2`, `noise_level=1.5`, `confidence_error_level=0.15`). Additional single-factor scenarios isolate individual radar/perception parameters. All statistics below are computed directly from `results/results_summary.csv` and `results/scenario_summary.csv`.
 
-The swarm was evaluated across three distinct fusion paradigms:
-1. **No Fusion (Independent):** UAVs rely solely on local, uncooperative onboard sensors.
-2. **Naive Fusion:** Shared sensor tracks are aggregated using standard covariance intersection or weighted averaging without evaluating sensor health, trust, or dynamic latency.
-3. **Trust-Weighted Fusion (Proposed):** Sensor data is dynamically filtered, latency-compensated, and weighted using dynamic trust estimation based on historical tracking residuals and covariance consistency.
+## 2. Descriptive Statistics (Matched Fusion-Mode Trio)
 
-### Primary Swarm Outcomes Evaluated:
-* **Collision Risk (Count):** Total count of safety violations / critical near-misses.
-* **Average Formation Error ($m$):** Root-mean-square tracking error from the nominal swarm geometry.
-* **Response Time ($s$):** The latency between hazard onset and coordinated swarm avoidance maneuvers.
-* **Mission Success Rate (%):** Percentage of runs where all UAVs successfully navigated to their goals without catastrophic collisions.
+| Metric | `no_fusion_matched` | `naive_fusion` | `trust_weighted_fusion` |
+|---|---|---|---|
+| Collision Risk (mean) | 151.00 | **84.70** | 89.05 |
+| Formation Error (mean) | 4.464 m | 4.082 m | **4.037 m** |
+| Mission Success Rate | 10% | **65%** | 45% |
+| Near Misses (mean) | 72.80 | 44.75 | 44.15 |
 
----
+## 3. One-Way ANOVA Across Fusion Modes
 
-## 2. Descriptive Statistics & Confidence Intervals
+$$H_0: \mu_{\text{no fusion}} = \mu_{\text{naive}} = \mu_{\text{trust-weighted}}$$
 
-The table below summarizes the means , standard deviations , and 95% confidence intervals (CI) across $N = 20$ trials for each fusion mode in a standard high-stress hazard scenario:
+- **Collision Risk Count**: F(2, 57) = 58.997, p = 1.31 × 10⁻¹⁴ (significant, p < 0.001)
+- **Formation Error**: F(2, 57) = 7.305, p = 1.50 × 10⁻³ (significant, p < 0.01)
 
-| Metric / Fusion Mode | Mean ($\mu$) | Std Dev ($\sigma$) | 95% Confidence Interval (CI) |
-| :--- | :---: | :---: | :---: |
-| **Collision Risk (Count)** | | | |
-| *No Fusion* | 114.20 | 12.45 | $[108.74, 119.66]$ |
-| *Naive Fusion* | 79.00 | 0.00 | $[79.00, 79.00]$ |
-| *Trust-Weighted Fusion* | **14.30** | 2.15 | $[13.36, 15.24]$ |
-| **Avg. Formation Error (m)** | | | |
-| *No Fusion* | 1.842 | 0.214 | $[1.748, 1.936]$ |
-| *Naive Fusion* | 1.415 | 0.188 | $[1.333, 1.497]$ |
-| *Trust-Weighted Fusion* | **0.582** | 0.041 | $[0.564, 0.600]$ |
-| **Avg. Response Time (s)** | | | |
-| *No Fusion* | 4.821 | 0.612 | $[4.552, 5.090]$ |
-| *Naive Fusion* | 3.110 | 0.420 | $[2.926, 3.294]$ |
-| *Trust-Weighted Fusion* | **1.850** | 0.155 | $[1.782, 1.918]$ |
-| **Mission Success Rate (%)** | | | |
-| *No Fusion* | 15.0% | — | $[3.2\%, 37.9\%]$ |
-| *Naive Fusion* | 45.0% | — | $[23.1\%, 68.5\%]$ |
-| *Trust-Weighted Fusion* | **95.0%** | — | $[75.1\%, 99.9\%]$ |
+**Conclusion:** Fusion mode has a statistically significant effect on both collision risk and formation error. Post-hoc inspection (see §4) shows this effect is driven almost entirely by the fused-vs-unfused contrast, not by differences between the two fusion algorithms.
 
-### Analysis of Descriptive Statistics:
-* **Safety Improvement:** The *Trust-Weighted Fusion* mode reduces collision risk by **81.9%** compared to *Naive Fusion* and **87.5%** compared to *No Fusion*.
-* **Precision and Stability:** The narrow confidence intervals and low standard deviation ($\sigma = 0.041$ for formation error) of the Trust-Weighted mode indicate highly stable, predictable performance across highly stochastic runs, unlike Naive Fusion which exhibits high variance.
+## 4. Paired Comparison: Naive vs. Trust-Weighted Fusion
 
----
+Paired t-tests across matched trial seeds (naive vs. trust-weighted, N=20 pairs):
 
-## 3. Multiple Group Comparison: ANOVA & Kruskal-Wallis
+- **Collision Risk:** t(19) = −1.442, p = 0.166 (not significant) — naive mean 84.70 vs. trust-weighted mean 89.05
+- **Formation Error:** t(19) = 1.500, p = 0.150 (not significant) — naive mean 4.082 m vs. trust-weighted mean 4.037 m
 
-To test whether the choice of fusion mode significantly affects performance across all scenarios, we applied a One-Way Analysis of Variance (ANOVA) for parametric metrics and the Kruskal-Wallis test for non-normal metrics.
+**Conclusion:** Unlike the fused-vs-unfused contrast, the difference between naive and trust-weighted fusion is **not statistically significant** on either metric at N=20. Descriptively, naive fusion has lower collision risk and trust-weighted fusion has lower formation error, but neither edge clears significance — consistent with the project's earlier finding that trust-weighted fusion underperforms naive fusion under confidence miscalibration (see `/areas/uav-swarm-simulation.md` and `fusion_results.md`).
 
-$$H_0: \mu_{\text{No Fusion}} = \mu_{\text{Naive}} = \mu_{\text{Trust-Weighted}}$$
-$$H_1: \text{At least one fusion mode has a different mean performance.}$$
+## 5. Mission Success Rate: Chi-Square Test
 
-### ANOVA Results:
-* **Collision Risk Count:** $F(2, 57) = 1042.8$, $p = 1.48 \times 10^{-41}$ (Highly Significant, $p < 0.001$ ***)
-* **Average Formation Error:** $F(2, 57) = 482.35$, $p = 9.88 \times 10^{-35}$ (Highly Significant, $p < 0.001$ ***)
-* **Average Response Time:** $F(2, 57) = 312.11$, $p = 5.23 \times 10^{-28}$ (Highly Significant, $p < 0.001$ ***)
+| Mode | Successes | Failures |
+|---|---|---|
+| `no_fusion_matched` | 2 | 18 |
+| `naive_fusion` | 13 | 7 |
+| `trust_weighted_fusion` | 9 | 11 |
 
-**Conclusion:** We reject the null hypothesis $H_0$ across all metrics. The choice of sensor fusion architecture has a statistically profound impact on swarm safety, formation precision, and reaction speed.
+χ²(2, N=60) = 12.917, p = 1.57 × 10⁻³ (significant at α = 0.01)
 
----
+**Conclusion:** Mission success rate differs significantly across fusion modes. `naive_fusion` achieves the highest observed success rate (65%), ahead of `trust_weighted_fusion` (45%) and far ahead of `no_fusion_matched` (10%).
 
-## 4. Paired Comparisons: Naive vs. Trust-Weighted Fusion
+## 6. Correlation Analysis: Radar/Perception Parameters vs. Swarm Outcomes
 
-To determine if the proposed Trust-Weighted algorithm offers a statistically significant improvement over traditional Naive Fusion, we performed paired t-tests across matching trial seeds.
+Pooled across `baseline` and the six single-factor perturbation scenarios plus the `env_*` combined scenarios:
 
-### Paired t-test Statistics:
-* **Formation Error:** $t(19) = 18.42$, $p = 3.24 \times 10^{-13}$ (Reject $H_0$ at $\alpha = 0.01$)
-* **Collision Risk:** $t(19) = 24.11$, $p = 1.12 \times 10^{-15}$ (Reject $H_0$ at $\alpha = 0.01$)
-* **Response Time:** $t(19) = 12.87$, $p = 8.44 \times 10^{-10}$ (Reject $H_0$ at $\alpha = 0.01$)
+| Parameter | r (Formation Error) | r (Collision Risk) | Significance |
+|---|---|---|---|
+| **noise_level** | +0.224 (p=2.7e-04) | **+0.954** (p=1.4e-136) | *** |
+| false_negative_rate | +0.234 (p=1.4e-04) | +0.825 (p=5.2e-66) | *** |
+| dropout_probability | +0.179 (p=3.8e-03) | +0.705 (p=1.9e-40) | *** |
+| confidence_error_level | +0.056 (n.s.) | +0.525 (p=8.7e-20) | *** (collision risk only) |
+| latency_steps | +0.317 (p=1.8e-07) | −0.120 (n.s.) | * (formation error only) |
+| false_positive_rate | −0.180 (p=3.6e-03) | −0.185 (p=2.8e-03) | ** (small, negative) |
 
-### Practical Significance (Cohen's $d$ Effect Size):
-To measure the magnitude of this improvement, we calculated Cohen’s $d$:
-
-$$d = \frac{\mu_{\text{naive}} - \mu_{\text{trust}}}{\sigma_{\text{pooled}}}$$
-
-* **Collision Risk:** $d = 5.21$ (Extremely Large Effect Size)
-* **Formation Error:** $d = 4.88$ (Extremely Large Effect Size)
-* **Response Time:** $d = 3.42$ (Extremely Large Effect Size)
-
-*Note: In statistical literature, any effect size $d > 0.8$ is considered large. Our values ($d > 3.0$) demonstrate that the trust-weighted algorithm provides a monumental practical improvement.*
-
----
-
-## 5. Significance Test for Mission Success Rates
-
-Using a Chi-Square ($\chi^2$) test of independence, we analyzed whether the proportion of successful missions significantly differed between the three fusion configurations.
-
-* **Chi-Square Statistic ($\chi^2$):** $30.82$
-* **Degrees of Freedom (df):** $2$
-* **p-value:** $2.03 \times 10^{-7}$ (Significant at $\alpha = 0.01$ ***)
-
-Post-hoc pairwise $\chi^2$ tests (with Bonferroni correction) confirm that the **95%** success rate of *Trust-Weighted Fusion* is significantly higher than *Naive Fusion* ($45\%$, $p = 0.0006$) and *No Fusion* ($15\%$, $p < 0.0001$).
-
----
-
-## 6. Correlation Analysis: Perception Parameters vs. Swarm Outcomes
-
-To understand how individual sensor degradation parameters drive overall swarm performance, we computed Pearson/Spearman correlation coefficients ($r$) using the simulation logs across all trials:
-
-### Correlation Matrix with Swarm Outcomes:
-
-| Perception Parameter | Impact on Avg. Formation Error ($r$) | Impact on Collision Risk ($r$) | Statistical Significance ($p$) |
-| :--- | :---: | :---: | :---: |
-| **Confidence Error Level** | $+0.6216$ | $+0.5841$ | $1.98 \times 10^{-65}$ *** |
-| **Dropout Probability** | $+0.4568$ | $+0.3950$ | $2.92 \times 10^{-32}$ *** |
-| **False Negative Rate** | $+0.3190$ | $+0.4820$ | $4.11 \times 10^{-16}$ *** |
-| **Latency Steps** | $-0.1656$ | $+0.2104$ | $4.60 \times 10^{-5}$ *** |
-| **False Positive Rate** | $-0.1017$ | $+0.0812$ | $0.0127$ * |
-
-### Key Takeaways from Correlation:
-1.  **Confidence Errors are Dangerous:** The strong positive correlation ($r = 0.6216$) between *Confidence Error Level* and *Formation Error* shows that when sensors generate inaccurate data but falsely claim high certainty, swarm performance degrades rapidly. This justifies the need for dynamic trust estimation.
-2.  **Packet Loss/Dropouts:** Higher packet loss ($r = 0.4568$) strongly degrades formation tracking.
-3.  **False Negatives vs. False Positives:** *False Negatives* (failing to see obstacles, $r = 0.4820$ with collisions) are far more dangerous to safety than *False Positives* (ghost obstacles, $r = 0.0812$), which mostly cause minor, unnecessary avoidance maneuvers.
-
----
+### Key Takeaways
+1. **Sensor noise (`noise_level`) is the dominant driver of tracking degradation** — its correlation with collision risk (r=0.954) is far stronger than any other parameter, and it is the only single-factor perturbation that drives mission success to 0%.
+2. **Missed detections and dropout are the next most damaging perception failures** (r=0.825 and r=0.705 with collision risk respectively) — both starve the tracker of usable measurements.
+3. **Confidence miscalibration correlates with collision risk but not formation error**, indicating its damage is concentrated at the fusion/trust stage rather than raw tracking geometry.
+4. **False positives are the mildest failure mode** and are weakly *negatively* correlated with both outcomes in this pooled sample — ghost detections mostly cause unnecessary avoidance maneuvers rather than true tracking loss.
 
 ## 7. Conclusion
 
-Through robust, repeated testing, we have established statistical proof that:
-1.  **Trust-Weighted Fusion** dramatically outperforms naive and independent approaches, maintaining tight formation stability and high mission success under severe sensor degradation.
-2.  **Deterministic limits** are broken: the proposed system mitigates the highly harmful effects of confidence mismatches and network dropouts, rendering the swarm resilient in non-ideal real-world deployments.
+The data support two robust, statistically significant conclusions: (1) **having any cross-UAV fusion is far better than none** (large, significant effects on collision risk, formation error, and mission success), and (2) **sensor noise is the single most damaging radar parameter** for tracking performance. The data do **not** support a strong, statistically significant claim that trust-weighted fusion outperforms naive fusion in its current form — the observed differences between the two algorithms are small and not significant at N=20 trials per condition.

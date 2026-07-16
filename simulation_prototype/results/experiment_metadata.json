@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-07-16T05:50:27.580196+00:00",
-  "wall_clock_seconds": 278.537,
+  "started_at": "2026-07-16T06:25:22.633555+00:00",
+  "wall_clock_seconds": 119.456,
   "config_path": "simulation_config.json",
   "config_sha256_16": "d8b67e2d941e742f",
   "num_trials": 20,
