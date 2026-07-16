@@ -61,10 +61,18 @@ At each time step, for every radar:
 import argparse
 import csv
 import json
+import os
+import sys
 
 import numpy as np
 
-from model.radar_like_model import RadarLikeModel
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_MODELS_DIR = os.path.join(_ROOT_DIR, "models")
+for _p in (_ROOT_DIR, _MODELS_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from radar_like_model import RadarLikeModel
 
 # Consecutive matches needed before a tentative track becomes confirmed.
 CONFIRM_HITS = 3
@@ -320,9 +328,9 @@ def build_tracks(scenario_name, detection_rows, dt, measurement_std=1.0):
 def main():
     parser = argparse.ArgumentParser(
         description="Turn raw radar detections into Kalman-filter radar tracks")
-    parser.add_argument("--config", default="simulation_config.json")
+    parser.add_argument("--config", default=os.path.join(_ROOT_DIR, "simulation_config.json"))
     parser.add_argument("--scenario", default=None, help="Run just one scenario instead of all")
-    parser.add_argument("--log", default="logs/radar_track_log.csv")
+    parser.add_argument("--log", default=os.path.join(_ROOT_DIR, "logs", "radar_track_log.csv"))
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -340,7 +348,6 @@ def main():
         print(f"{name}: {len(detection_rows)} radar detections -> {len(track_rows)} track rows")
 
     if all_rows:
-        import os
         os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
         fieldnames = list(all_rows[0].keys())
         with open(args.log, "w", newline="") as f:
