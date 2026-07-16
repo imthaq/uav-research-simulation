@@ -64,7 +64,7 @@ import json
 
 import numpy as np
 
-from model.radar_like_model import RadarLikeModel
+from models.radar_like_model import RadarLikeModel
 
 # Consecutive matches needed before a tentative track becomes confirmed.
 CONFIRM_HITS = 3
