@@ -13,10 +13,13 @@ Performs statistical analysis on simulation results:
 import argparse
 import csv
 import json
+import os
 import sys
 from collections import defaultdict
 from scipy import stats
 import numpy as np
+
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def load_results_csv(path):
@@ -261,9 +264,9 @@ def perception_parameter_correlation(rows):
 
 def main():
     parser = argparse.ArgumentParser(description="Statistical analysis of simulation results")
-    parser.add_argument("--input", default="results/results_summary.csv", 
+    parser.add_argument("--input", default=os.path.join(_ROOT_DIR, "results", "results_summary.csv"), 
                        help="Input CSV from run_experiments.py")
-    parser.add_argument("--output", default="results/statistical_analysis.json",
+    parser.add_argument("--output", default=os.path.join(_ROOT_DIR, "results", "statistical_analysis.json"),
                        help="Output JSON file")
     args = parser.parse_args()
     
@@ -302,7 +305,6 @@ def main():
     analyses = convert(analyses)
     
     # Write JSON
-    import os
     os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
     with open(args.output, 'w') as f:
         json.dump(analyses, f, indent=2)

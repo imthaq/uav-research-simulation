@@ -28,6 +28,10 @@ import sys
 import random
 from datetime import datetime
 
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
+
 from simple_swarm_sim import Simulation
 
 
@@ -159,13 +163,13 @@ def run_ablation_experiment(base_config, ablation_name, scenario_names,
 
 def main():
     parser = argparse.ArgumentParser(description="Run ablation study on swarm simulation")
-    parser.add_argument("--config", default="simulation_config.json",
+    parser.add_argument("--config", default=os.path.join(_ROOT_DIR, "simulation_config.json"),
                        help="Base simulation config")
     parser.add_argument("--scenarios", nargs="+", default=None,
                        help="Scenarios to ablate (default: all non-baseline)")
     parser.add_argument("--trials", type=int, default=5,
                        help="Number of trials per scenario per ablation")
-    parser.add_argument("--output", default="results/ablation_results.csv",
+    parser.add_argument("--output", default=os.path.join(_ROOT_DIR, "results", "ablation_results.csv"),
                        help="Output CSV file")
     parser.add_argument("--seed", type=int, default=42,
                        help="Base random seed")

@@ -69,10 +69,6 @@ import sys
 import time
 from datetime import datetime, timezone
 
-_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT_DIR not in sys.path:
-    sys.path.insert(0, _ROOT_DIR)
-
 from simple_swarm_sim import Simulation
 
 # --- run-level (one row per scenario per trial) output schema -------------
@@ -307,16 +303,18 @@ def _config_hash(config):
 
 def write_metadata(path, *, config_path, config, num_trials, base_seed, seed_mode,
                     scenario_names, run_matrix, total_runs, save_step_logs,
-                    started_at, wall_clock_seconds):
+                    started_at, wall_clock_seconds, output_paths):
     """Experiment metadata logging: records exactly how this experiment
     was produced - config identity, trial/seed strategy, the per-scenario
-    seeds actually used, timing, and the environment it ran on - so any
-    results file can be traced back to the run that generated it."""
+    seeds actually used, timing, the environment it ran on, and where every
+    output file landed - so any results file can be traced back to the run
+    (and full config) that generated it."""
     metadata = {
         "started_at": started_at,
         "wall_clock_seconds": round(wall_clock_seconds, 3),
         "config_path": config_path,
         "config_sha256_16": _config_hash(config),
+        "config": config,
         "num_trials": num_trials,
         "recommended_trials": {"initial_analysis_minimum": 20, "paper_ready": "50-100"},
         "base_seed": base_seed,
@@ -325,6 +323,7 @@ def write_metadata(path, *, config_path, config, num_trials, base_seed, seed_mod
         "num_scenarios": len(scenario_names),
         "total_runs": total_runs,
         "save_step_logs": save_step_logs,
+        "output_paths": output_paths,
         "seeds_by_scenario": {
             scenario_name: [r["seed"] for r in run_matrix if r["scenario"] == scenario_name]
             for scenario_name in scenario_names
@@ -346,11 +345,12 @@ def main():
         description="Monte Carlo experiment runner: repeats every scenario for N trials, "
                      "saving run-level results, a scenario-level statistical summary, and "
                      "experiment metadata")
-    parser.add_argument("--config", default=os.path.join(_ROOT_DIR, "simulation_config.json"))
-    parser.add_argument("--trials", "--runs", dest="trials", type=int, default=20,
+    parser.add_argument("--config", default="simulation_config.json")
+    parser.add_argument("--trials", "--runs", dest="trials", type=int, default=None,
                          help="Trials per scenario. Recommended: >= 20 for initial analysis, "
                               "50-100 for paper-ready final results if computationally "
-                              "feasible (default: 20)")
+                              "feasible (default: config['reproducibility']['trial_count'], "
+                              "falling back to 20)")
     parser.add_argument("--scenario", default=None, help="Only run this one scenario")
     parser.add_argument("--base-seed", type=int, default=None,
                          help="Master seed the run matrix is derived from "
@@ -360,35 +360,52 @@ def main():
                               "across scenarios, matching pre-Task-16 behavior. 'random': an "
                               "independent seed per (scenario, trial), drawn from a single "
                               "random.Random(base_seed) stream")
-    parser.add_argument("--logs-dir", default=os.path.join(_ROOT_DIR, "logs"))
-    parser.add_argument("--results-dir", default=os.path.join(_ROOT_DIR, "results"))
-    parser.add_argument("--combined-log", default=os.path.join(_ROOT_DIR, "logs", "simulation_log.csv"),
-                         help="Combined log covering trial 1 of every scenario")
+    parser.add_argument("--logs-dir", default=None,
+                         help="default: 'logs'")
+    parser.add_argument("--results-dir", default=None,
+                         help="default: config['reproducibility']['output_location'], "
+                              "falling back to 'results'")
+    parser.add_argument("--combined-log", default=None,
+                         help="Combined log covering trial 1 of every scenario "
+                              "(default: <logs-dir>/simulation_log.csv)")
     parser.add_argument("--run-level-output", "--summary-output", dest="run_level_output",
-                         default=os.path.join(_ROOT_DIR, "results", "results_summary.csv"),
+                         default=None,
                          help="Run-level results, one row per (scenario, trial) - unchanged "
-                              "schema, still what generate_plots.py/metrics_analysis.py expect")
-    parser.add_argument("--scenario-summary-output", default=os.path.join(_ROOT_DIR, "results", "scenario_summary.csv"),
+                              "schema, still what generate_plots.py/metrics_analysis.py expect "
+                              "(default: <results-dir>/results_summary.csv)")
+    parser.add_argument("--scenario-summary-output", default=None,
                          help="Scenario-level statistical summary (mean/median/stdev/min/max/"
-                              "95% CI per metric, aggregated across trials)")
-    parser.add_argument("--metadata-output", default=os.path.join(_ROOT_DIR, "results", "experiment_metadata.json"),
+                              "95% CI per metric, aggregated across trials) "
+                              "(default: <results-dir>/scenario_summary.csv)")
+    parser.add_argument("--metadata-output", default=None,
                          help="Experiment metadata: config identity, trial/seed strategy, "
-                              "per-scenario seeds used, timing, environment")
+                              "per-scenario seeds used, timing, environment, output paths "
+                              "(default: <results-dir>/experiment_metadata.json)")
     parser.add_argument("--skip-step-logs", action="store_true",
                          help="Don't write the per-trial step-level CSV log to --logs-dir - "
                               "keeps only the aggregated results. Recommended at 50-100 trials, "
                               "where per-trial logs dominate disk/time cost")
     args = parser.parse_args()
 
+    with open(args.config) as f:
+        config = json.load(f)
+    repro_cfg = config.get("reproducibility", {})
+
+    # Task 23: trial count and output location are config-driven (with the
+    # matching CLI flag still able to override per-invocation).
+    args.trials = args.trials if args.trials is not None else repro_cfg.get("trial_count", 20)
     if args.trials < 1:
         sys.exit(f"--trials must be >= 1 (got {args.trials})")
+    args.results_dir = args.results_dir or repro_cfg.get("output_location", "results")
+    args.logs_dir = args.logs_dir or "logs"
+    args.run_level_output = args.run_level_output or os.path.join(args.results_dir, "results_summary.csv")
+    args.scenario_summary_output = args.scenario_summary_output or os.path.join(args.results_dir, "scenario_summary.csv")
+    args.metadata_output = args.metadata_output or os.path.join(args.results_dir, "experiment_metadata.json")
+    args.combined_log = args.combined_log or os.path.join(args.logs_dir, "simulation_log.csv")
 
     os.makedirs(args.results_dir, exist_ok=True)
     if not args.skip_step_logs:
         os.makedirs(args.logs_dir, exist_ok=True)
-
-    with open(args.config) as f:
-        config = json.load(f)
 
     if args.scenario and args.scenario not in config["scenarios"]:
         available = ", ".join(config["scenarios"].keys())
@@ -476,7 +493,15 @@ def main():
         num_trials=args.trials, base_seed=base_seed, seed_mode=args.seed_mode,
         scenario_names=scenario_names, run_matrix=run_matrix, total_runs=len(run_matrix),
         save_step_logs=not args.skip_step_logs, started_at=started_at,
-        wall_clock_seconds=wall_clock_seconds)
+        wall_clock_seconds=wall_clock_seconds,
+        output_paths={
+            "results_dir": args.results_dir,
+            "logs_dir": args.logs_dir if not args.skip_step_logs else None,
+            "run_level_output": args.run_level_output,
+            "scenario_summary_output": args.scenario_summary_output,
+            "metadata_output": args.metadata_output,
+            "combined_log": args.combined_log,
+        })
     print(f"Experiment metadata -> {args.metadata_output}")
 
     print(f"\nDone in {wall_clock_seconds:.1f}s.")
