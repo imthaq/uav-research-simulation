@@ -199,9 +199,9 @@ from collections import deque
 
 import numpy as np
 
-from radar_like_model import RadarLikeModel
+from models.radar_like_model import RadarLikeModel
 from radar_track_model import build_tracks
-import communication_model
+import models.communication_model
 
 NO_FUSION = "no_fusion"
 NAIVE_FUSION = "naive_fusion"
@@ -829,7 +829,7 @@ def fuse_distributed(radar_tracks, fusion_mode, cluster_distance=CLUSTER_DISTANC
         raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
 
     rng = rng or np.random.default_rng()
-    channel = channel or communication_model.CommunicationChannel(
+    channel = channel or models.communication_model.CommunicationChannel(
         packet_loss_probability=comm_drop_probability,
         base_latency_steps=hop_latency_steps,
         rng=random.Random(int(rng.integers(0, 2**31 - 1))))
@@ -966,7 +966,7 @@ def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED
             "central_downlink_latency_steps", CENTRAL_DOWNLINK_LATENCY_STEPS)
     else:
         del architecture_kwargs["max_staleness_steps"]  # folded into the channel itself below
-        architecture_kwargs["channel"] = communication_model.from_config(
+        architecture_kwargs["channel"] = models.communication_model.from_config(
             comm_cfg, rng=random.Random(channel_rng.randint(0, 2**31 - 1)))
         architecture_kwargs["rng"] = np.random.default_rng(seed)
 
