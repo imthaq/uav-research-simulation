@@ -8,11 +8,11 @@ reference point.
 Uses the true obstacle/target position directly, with no sensor noise,
 dropout, or false alarms. Represents the theoretical upper bound on
 performance. Included to isolate perception error from planning/control
-error — any gap between this and other methods is attributable purely to
+error any gap between this and other methods is attributable purely to
 sensing imperfection.
 
 ## 2. Radar-Only Detection
-Uses raw radar detections each step with no temporal filtering — a
+Uses raw radar detections each step with no temporal filtering a
 detection either exists this step or it doesn't. Captures the effect of
 range/FOV limits, missed detections, and false alarms/clutter in
 isolation. Included as the simplest real-sensor baseline, before any
@@ -21,7 +21,7 @@ smoothing or estimation is applied.
 ## 3. Radar-Only Tracking
 Adds a Kalman filter on top of radar detections, giving predicted
 ("coasting") vs. filtered position estimates, track status, and
-covariance. Included to show the value of temporal filtering alone —
+covariance. Included to show the value of temporal filtering alone
 the improvement over Detection-only isolates what tracking (not fusion)
 buys you.
 
@@ -29,7 +29,7 @@ buys you.
 Combines radar, vision, and LiDAR estimates with simple averaging,
 ignoring per-sensor confidence or reliability. Included as the simplest
 multi-sensor baseline, showing the raw benefit of adding sensors before
-any weighting scheme is applied — and as a foil for smarter fusion
+any weighting scheme is applied  and as a foil for smarter fusion
 methods below.
 
 ## 5. Trust-Weighted Fusion
@@ -56,13 +56,13 @@ dropout.
 ## 8. Centralized Fusion
 All UAVs' sensor data is combined into one shared fused estimate,
 computed at a single point. Included as the accuracy upper bound for
-multi-UAV fusion — no communication loss, no per-UAV divergence — and as
+multi-UAV fusion no communication loss, no per-UAV divergence — and as
 the comparison target for the distributed architecture below.
 
 ## 9. Distributed Fusion
 Each UAV computes its own local fused estimate from whatever peer
 broadcasts it actually receives, subject to communication dropout.
-Included to measure the real-world cost of decentralization — how much
+Included to measure the real-world cost of decentralization how much
 accuracy is lost when communication is imperfect, and how gracefully the
 swarm degrades under packet loss (e.g. the communication-outage
 scenario).
