@@ -905,8 +905,8 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
     CSV schema (one row per active UAV per step); metrics is the same
     summary dict Simulation.run() returns.
     """
-    from radar_like_model import RadarLikeModel, _range_bearing_radial
-    from radar_track_model import RadarTracker
+    from models.radar_like_model import RadarLikeModel, _range_bearing_radial
+    from model.radar_track_model import RadarTracker
     from fusion_model import fuse_step, TrustTracker
 
     model = RadarLikeModel(config, scenario_name)
