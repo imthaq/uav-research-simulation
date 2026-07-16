@@ -1,8 +1,8 @@
 {
-  "started_at": "2026-07-15T08:06:06.104392+00:00",
-  "wall_clock_seconds": 107.697,
+  "started_at": "2026-07-16T05:50:27.580196+00:00",
+  "wall_clock_seconds": 278.537,
   "config_path": "simulation_config.json",
-  "config_sha256_16": "ff0ef90faa016c4d",
+  "config_sha256_16": "d8b67e2d941e742f",
   "num_trials": 20,
   "recommended_trials": {
     "initial_analysis_minimum": 20,

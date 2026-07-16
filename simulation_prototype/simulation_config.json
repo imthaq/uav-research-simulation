@@ -920,5 +920,22 @@
     "corruption_probability": 0.0,
     "central_uplink_latency_steps": 1,
     "central_downlink_latency_steps": 1
+  },
+  "reproducibility": {
+    "_description": "single place documenting/controlling everything needed to reproduce a run. UAV count/target count/obstacle count/sensor/radar/fusion/communication parameters already live above (swarm.num_uavs, scenarios[*].entities, sensing, radar, scenarios[*].fusion_mode, communication) and per-scenario name + random seed are resolved at run time by run_experiments.py (scenario_names, sim.seed / --base-seed) - not duplicated here to avoid two sources of truth. This block adds the two pieces that weren't config-driven before (trial_count, output_location) plus a record of the tracker's lifecycle/gating constants.",
+    "trial_count": 20,
+    "output_location": "results",
+    "tracker_parameters": {
+      "_source": "mirrors the module-level constants in radar_track_model.py (RadarTracker/RadarTrack); recorded here for reproducibility, not yet read from config",
+      "confirm_hits": 3,
+      "max_missed": 3,
+      "gate_chi2": 9.21,
+      "exist_prob_init": 0.65,
+      "exist_prob_hit_gain": 0.15,
+      "exist_prob_miss_decay": 0.3,
+      "exist_prob_delete_floor": 0.1,
+      "process_accel_std": 1.0,
+      "init_velocity_var": 25.0
+    }
   }
 }
