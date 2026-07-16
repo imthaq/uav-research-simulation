@@ -1,12 +1,27 @@
 """
 Simulation Visualizer: Replay and visualize UAV swarm scenarios from CSV logs.
-Supports live viewing, replay from logs, video export (mp4/gif), and
-side-by-side fusion-mode comparison videos.
+Supports live viewing, replay from logs, video export (mp4/gif), side-by-side
+fusion-mode/architecture comparison videos, and a one-shot "advanced demo"
+video suite covering Kalman tracking, sensor fusion, and inter-UAV
+communication.
+
+Task 22 overlay additions on top of the original radar-only overlay:
+  - predicted vs. filtered track position (Kalman "coasting" vs. updated)
+  - measured detection position (radar/vision/LiDAR)
+  - covariance ellipses (tracks, fused estimates, vision/LiDAR measurements)
+  - track status, track history trail, and a false-track heuristic label
+  - stale measurement indicator (vision/LiDAR async-update staleness)
+  - sensor source label + per-measurement confidence/trust
+  - fused track marker (centralized and per-UAV distributed estimates)
+  - inter-UAV communication links, with packet-dropout indication
+  - centralized/distributed fusion architecture labeling
 """
 
+import copy
 import csv
 import json
 import os
+import re
 import math
 import shutil
 import argparse
@@ -45,19 +60,20 @@ class SimulationData:
         self.is_live: bool = False
 
     @staticmethod
-    def from_csv(csv_path: str) -> "SimulationData":
-        """Load simulation data from CSV log file."""
+    def from_rows(rows: List[Dict]) -> "SimulationData":
+        """Builds a SimulationData directly from already-in-memory log rows
+        (e.g. Simulation.log_rows, or a RadarLikeModel's own `.sim.log_rows`)
+        without a CSV round trip. from_csv is just this + a CSV read, so
+        in-memory pipelines (like the advanced-demo generator below) can
+        skip writing/reading a file entirely and still get identical
+        behavior to a replayed log."""
         data = SimulationData()
-        with open(csv_path, "r") as f:
-            reader = csv.DictReader(f)
-            data.rows = list(reader)
+        if not rows:
+            raise ValueError("No rows given to SimulationData.from_rows")
 
-        if not data.rows:
-            raise ValueError(f"No data in {csv_path}")
+        data.rows = rows
+        data.scenario_name = rows[0].get("scenario", "unknown")
 
-        data.scenario_name = data.rows[0].get("scenario", "unknown")
-
-        # Extract unique UAVs and build trajectories
         uav_ids = set()
         steps_set = set()
         for row in data.rows:
@@ -72,21 +88,15 @@ class SimulationData:
         data.num_uavs = len(uav_ids)
         data.steps = max(steps_set) + 1 if steps_set else 0
 
-        # Extract obstacle from first row
         try:
             data.obstacle_pos = (
                 float(data.rows[0]["actual_obstacle_x"]),
                 float(data.rows[0]["actual_obstacle_y"]),
             )
-            # Assuming fixed obstacle radius across logs
             data.obstacle_radius = 5.0
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, TypeError):
             pass
 
-        # Determine mission outcome: find the first step (if any) at which
-        # mission_completed_flag is True for any UAV. If the log ends
-        # without that ever happening, the mission is a FAILURE, not
-        # perpetually "In Progress".
         for row in data.rows:
             flag = row.get("mission_completed_flag")
             if flag in ("True", True):
@@ -96,6 +106,16 @@ class SimulationData:
         data.mission_success = data.mission_success_step is not None
 
         return data
+
+    @staticmethod
+    def from_csv(csv_path: str) -> "SimulationData":
+        """Load simulation data from CSV log file."""
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        if not rows:
+            raise ValueError(f"No data in {csv_path}")
+        return SimulationData.from_rows(rows)
 
     def get_step_data(self, step: int) -> List[Dict]:
         """Get all UAV data for a given step."""
@@ -113,6 +133,22 @@ class RadarData:
     def __init__(self):
         self.detections: Dict[Tuple[int, int], List[Dict]] = defaultdict(list)
         self.tracks: Dict[Tuple[int, int], List[Dict]] = defaultdict(list)
+
+    @staticmethod
+    def from_rows(detection_rows: Optional[List[Dict]] = None,
+                   track_rows: Optional[List[Dict]] = None) -> "RadarData":
+        """Builds a RadarData directly from in-memory detection/track rows
+        (as returned by RadarLikeModel.run() / radar_track_model.build_tracks),
+        skipping the CSV round trip - used by the in-memory advanced-demo
+        pipeline below."""
+        rd = RadarData()
+        for row in (detection_rows or []):
+            key = (int(row["time_step"]), int(row["radar_id"]))
+            rd.detections[key].append(row)
+        for row in (track_rows or []):
+            key = (int(row["time_step"]), int(row["radar_id"]))
+            rd.tracks[key].append(row)
+        return rd
 
     @staticmethod
     def from_csvs(scenario_name: str, radar_log_path: Optional[str] = None,
@@ -139,6 +175,79 @@ class RadarData:
         return rd
 
 
+class AuxSensorData:
+    """Parsed detection rows from an auxiliary point-sensor model that
+    shares the vision_like_model.py / lidar_like_model.py row shape:
+    measured_x/measured_y, confidence_score, covariance, validity_flag,
+    is_stale, sensor_reliability, plus a per-model id column
+    (vision_id / lidar_id). Indexed by (step, uav_id), same shape as
+    RadarData.detections, so the visualizer can treat radar/vision/LiDAR
+    overlays uniformly wherever their fields line up."""
+
+    def __init__(self, sensor_label: str):
+        self.sensor_label = sensor_label  # "vision" or "lidar"
+        self.detections: Dict[Tuple[int, int], List[Dict]] = defaultdict(list)
+
+    @staticmethod
+    def from_csv(path: Optional[str], scenario_name: str, sensor_label: str) -> "AuxSensorData":
+        data = AuxSensorData(sensor_label)
+        if not path or not os.path.exists(path):
+            return data
+        id_field = f"{sensor_label}_id"
+        with open(path) as f:
+            for row in csv.DictReader(f):
+                if row.get("scenario") != scenario_name:
+                    continue
+                if id_field not in row:
+                    continue
+                key = (int(row["time_step"]), int(row[id_field]))
+                data.detections[key].append(row)
+        return data
+
+
+def _parse_contributor_uav_ids(source_ids_str: Optional[str]) -> set:
+    """fusion_model.py encodes each fused estimate's contributing radar
+    tracks as a ';'-joined list of track ids shaped 'r{radar_id}_t{n}'
+    (see RadarTrack.track_id). Pulls the contributing UAV/radar ids back
+    out of that string - the only per-link record the fusion log carries -
+    so the visualizer can infer which inter-UAV broadcasts a distributed
+    fused estimate actually incorporated this step."""
+    ids = set()
+    for tok in (source_ids_str or "").split(";"):
+        m = re.match(r"r(\d+)_t\d+", tok.strip())
+        if m:
+            ids.add(int(m.group(1)))
+    return ids
+
+
+class FusedTrackData:
+    """Parsed rows from fusion_model.py's fused-track log, indexed by
+    time_step (a step can contain several rows: one shared centralized
+    estimate, or one per UAV's local distributed estimate)."""
+
+    def __init__(self):
+        self.rows_by_step: Dict[int, List[Dict]] = defaultdict(list)
+
+    @staticmethod
+    def from_rows(rows: List[Dict]) -> "FusedTrackData":
+        fd = FusedTrackData()
+        for row in rows:
+            fd.rows_by_step[int(row["time_step"])].append(row)
+        return fd
+
+    @staticmethod
+    def from_csv(path: Optional[str], scenario_name: str) -> "FusedTrackData":
+        fd = FusedTrackData()
+        if not path or not os.path.exists(path):
+            return fd
+        with open(path) as f:
+            for row in csv.DictReader(f):
+                if row.get("scenario") != scenario_name:
+                    continue
+                fd.rows_by_step[int(row["time_step"])].append(row)
+        return fd
+
+
 def _resolve_radar_params(config: dict, scenario_name: str) -> Tuple[float, float]:
     """Mirrors radar_like_model.RadarLikeModel's own scenario-first config
     resolution (scenario override -> top-level "radar" section -> default)
@@ -154,17 +263,45 @@ def _resolve_radar_params(config: dict, scenario_name: str) -> Tuple[float, floa
     return float(radar_range), float(radar_fov)
 
 
+def _covariance_ellipse(cx: float, cy: float, cov2x2, n_std: float = 2.0, **kwargs):
+    """Builds a matplotlib Ellipse patch representing the n_std-sigma
+    confidence region of a 2x2 position covariance matrix, via its
+    eigen-decomposition (ellipse axes = sqrt(eigenvalues), orientation =
+    the corresponding eigenvector). Returns None for a degenerate/missing
+    covariance rather than raising, since a malformed covariance shouldn't
+    crash a whole frame's render."""
+    try:
+        cov = np.array(cov2x2, dtype=float)
+        if cov.shape != (2, 2):
+            return None
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        eigvals = np.clip(eigvals, 0.0, None)
+        order = np.argsort(eigvals)[::-1]
+        eigvals, eigvecs = eigvals[order], eigvecs[:, order]
+        width, height = 2 * n_std * np.sqrt(eigvals)
+        angle = math.degrees(math.atan2(eigvecs[1, 0], eigvecs[0, 0]))
+        return patches.Ellipse((cx, cy), width=max(float(width), 1e-3),
+                                height=max(float(height), 1e-3), angle=angle, **kwargs)
+    except (ValueError, TypeError, np.linalg.LinAlgError, IndexError):
+        return None
+
+
 class SimulationVisualizer:
     """Visualizes UAV swarm simulation scenarios.
 
     Normally creates its own figure/axis. For multi-panel comparison
-    renders (see `generate_fusion_comparison_video`), an existing
-    `fig`/`ax` pair can be passed in so several scenarios share one figure.
+    renders (see `generate_fusion_comparison_video` /
+    `generate_advanced_demo_videos`), an existing `fig`/`ax` pair can be
+    passed in so several scenarios share one figure.
     """
 
     def __init__(self, data: SimulationData, figsize: Tuple[int, int] = (12, 10),
                  fig=None, ax=None, radar_data: Optional["RadarData"] = None,
-                 radar_range: float = 15.0, radar_fov_deg: float = 360.0):
+                 radar_range: float = 15.0, radar_fov_deg: float = 360.0,
+                 vision_data: Optional["AuxSensorData"] = None,
+                 lidar_data: Optional["AuxSensorData"] = None,
+                 fused_data: Optional["FusedTrackData"] = None,
+                 show_covariance: bool = True, show_track_history: bool = True):
         self.data = data
         self.figsize = figsize
         self.current_step = 0
@@ -176,6 +313,17 @@ class SimulationVisualizer:
         self.radar_data = radar_data
         self.radar_range = radar_range
         self.radar_fov_deg = radar_fov_deg
+
+        # Optional vision/LiDAR overlays - same "None = skip" contract.
+        self.vision_data = vision_data
+        self.lidar_data = lidar_data
+
+        # Optional fused-track overlay (fusion_model.py output): fused
+        # position, architecture, communication links/dropout.
+        self.fused_data = fused_data
+
+        self.show_covariance = show_covariance
+        self.show_track_history = show_track_history
 
         # Setup figure (or reuse one provided by a multi-panel caller)
         if fig is not None and ax is not None:
@@ -193,10 +341,28 @@ class SimulationVisualizer:
         self.collision_zones = []
         self.goal_markers = {}
         self.info_text = None
-        # Everything radar-related is redrawn from scratch every step (like
-        # perceived_obstacles/collision_zones above), so one flat list of
-        # artists - patches AND text, both support .remove() - is enough.
+        # Everything radar/vision/LiDAR/fusion-related is redrawn from
+        # scratch every step (like perceived_obstacles/collision_zones
+        # above), so one flat list of artists - patches AND text, both
+        # support .remove() - is enough.
         self.radar_artists = []
+
+        # Track history: track_id -> sorted [(step, x, y), ...], built once
+        # up front from every track row this replay/run has (radar_data is
+        # already fully populated before the visualizer is constructed,
+        # whether it came from a finished CSV or an in-memory model run).
+        self._track_history: Dict[str, List[Tuple[int, float, float]]] = defaultdict(list)
+        if self.radar_data is not None:
+            for rows in self.radar_data.tracks.values():
+                for row in rows:
+                    tid = row.get("track_id")
+                    try:
+                        self._track_history[tid].append(
+                            (int(row["time_step"]), float(row["est_x"]), float(row["est_y"])))
+                    except (TypeError, ValueError, KeyError):
+                        continue
+            for tid in self._track_history:
+                self._track_history[tid].sort(key=lambda r: r[0])
 
     def setup_axis(self):
         """Configure the plot axis and static elements."""
@@ -259,6 +425,8 @@ class SimulationVisualizer:
                 pass
         self.radar_artists.clear()
 
+        uav_positions: Dict[int, Tuple[float, float]] = {}
+
         # Process each UAV's data for this step
         for idx, row in enumerate(step_data):
             uav_id = int(row["uav_id"])
@@ -268,6 +436,7 @@ class SimulationVisualizer:
             y = float(row["uav_pos_y"])
             gx = float(row["goal_pos_x"])
             gy = float(row["goal_pos_y"])
+            uav_positions[uav_id] = (x, y)
 
             # Draw/update UAV position dot
             if uav_id not in self.uav_dots:
@@ -337,6 +506,16 @@ class SimulationVisualizer:
             if self.radar_data is not None:
                 self._draw_radar_overlay(step, uav_id, x, y, gx, gy, color, row)
 
+            # ---- Vision / LiDAR overlays (only if supplied) ----
+            if self.vision_data is not None:
+                self._draw_aux_overlay(self.vision_data, "*", step, uav_id, color)
+            if self.lidar_data is not None:
+                self._draw_aux_overlay(self.lidar_data, "P", step, uav_id, color)
+
+        # ---- Fusion overlay: fused tracks + communication links ----
+        if self.fused_data is not None:
+            self._draw_fusion_overlay(step, colors, uav_positions)
+
         # Update info text
         if not self.info_text:
             self.info_text = self.ax.text(
@@ -382,6 +561,10 @@ Error: {error_type}
 Fusion: {fusion_mode}"""
         if radar_error is not None:
             info_text += f"\nRadar error: {radar_error}"
+        if self.fused_data is not None:
+            arch_summary = self._fusion_architecture_summary(step)
+            if arch_summary:
+                info_text += f"\nFusion arch: {arch_summary}"
         info_text += f"\nMission: {mission_status}"
 
         self.info_text.set_text(info_text)
@@ -399,11 +582,12 @@ Fusion: {fusion_mode}"""
         """Draws everything radar-related for one UAV at one step: sensing
         range, field-of-view wedge, this step's raw detections (color-coded
         by real/false-alarm/clutter/missed), this step's radar tracks
-        (colored by tentative/confirmed/lost, labeled with track ID and
-        confidence), and a "fused" tag on the perceived-obstacle marker
-        when fusion is active for this run. All artists it creates are
-        appended to self.radar_artists so render_step() can wipe them clean
-        again next frame - nothing here is persistent."""
+        (predicted vs. filtered position, status, covariance ellipse, track
+        history trail, and a false-track heuristic label), and a "fused"
+        tag on the perceived-obstacle marker when fusion is active for this
+        run. All artists it creates are appended to self.radar_artists so
+        render_step() can wipe them clean again next frame - nothing here
+        is persistent."""
         # Sensing range: faint fill + a thin ring so it reads at a glance
         # without drowning out the UAV/obstacle markers underneath it.
         if self.radar_range > 0:
@@ -437,7 +621,7 @@ Fusion: {fusion_mode}"""
                 self.radar_artists.append(pt)
                 conf = d.get("confidence_score")
                 if conf not in (None, ""):
-                    lbl = self.ax.text(dx + 0.6, dy + 0.6, f"{float(conf):.2f}",
+                    lbl = self.ax.text(dx + 0.6, dy + 0.6, f"R:{float(conf):.2f}",
                                         fontsize=6, color=color)
                     self.radar_artists.append(lbl)
             elif status == "false_alarm":
@@ -462,17 +646,78 @@ Fusion: {fusion_mode}"""
                     self.radar_artists.append(lbl)
 
         # This step's radar tracks for this UAV (from radar_track_model.py).
-        track_colors = {"tentative": "gray", "confirmed": color, "lost": "red"}
+        track_colors = {"tentative": "gray", "confirmed": color,
+                         "coasting": "slateblue", "lost": "red", "deleted": "black"}
         for t in self.radar_data.tracks.get((step, uav_id), []):
             tx, ty = float(t["est_x"]), float(t["est_y"])
             status = t.get("status", "tentative")
             tcolor = track_colors.get(status, "gray")
-            (pt,) = self.ax.plot(tx, ty, "D", color=tcolor, markersize=6, alpha=0.9)
+
+            # "coasting" = this step had no matching detection, so est_x/y
+            # is a pure Kalman *prediction*; every other status means it
+            # was actually Kalman-*updated* (filtered) against a real
+            # detection this step.
+            is_predicted = status == "coasting"
+            marker_shape = "d" if is_predicted else "D"
+            facecolor = "none" if is_predicted else tcolor
+            (pt,) = self.ax.plot(tx, ty, marker_shape, color=tcolor,
+                                  markerfacecolor=facecolor, markersize=7,
+                                  alpha=0.5 if status in ("lost", "deleted") else 0.9)
             self.radar_artists.append(pt)
+
+            # Covariance ellipse: top-left 2x2 (position) block of the
+            # filter's 4x4 state covariance.
+            if self.show_covariance:
+                cov_json = t.get("covariance")
+                if cov_json:
+                    try:
+                        cov4 = json.loads(cov_json)
+                        cov2 = [[cov4[0][0], cov4[0][1]], [cov4[1][0], cov4[1][1]]]
+                        ell = _covariance_ellipse(
+                            tx, ty, cov2, n_std=2.0, edgecolor=tcolor, facecolor=tcolor,
+                            linestyle="-", linewidth=0.8, alpha=0.12)
+                        if ell is not None:
+                            self.ax.add_patch(ell)
+                            self.radar_artists.append(ell)
+                    except (ValueError, TypeError, IndexError, json.JSONDecodeError):
+                        pass
+
+            # Track history trail: every est_x/y this track has had, up to
+            # (and including) the current step.
+            if self.show_track_history:
+                track_id = t.get("track_id")
+                hist = self._track_history.get(track_id, [])
+                hist_upto = [(hx, hy) for (hs, hx, hy) in hist if hs <= step]
+                if len(hist_upto) > 1:
+                    hxs, hys = zip(*hist_upto)
+                    (trail,) = self.ax.plot(hxs, hys, "-", color=tcolor, alpha=0.3, linewidth=1.0)
+                    self.radar_artists.append(trail)
+
+            # False-track heuristic: the nearest same-step detection this
+            # track sits on top of was itself flagged as a false alarm /
+            # clutter return, so this is likely a track locked onto a
+            # spurious return rather than a real target. Approximate, since
+            # the track log doesn't retain a direct link to its originating
+            # detection - proximity to a same-step false-alarm return is the
+            # best signal available without changing the upstream schema.
+            false_track = False
+            for d in self.radar_data.detections.get((step, uav_id), []):
+                if d.get("detection_status") != "false_alarm":
+                    continue
+                dxv, dyv = d.get("detected_x"), d.get("detected_y")
+                if dxv in (None, "") or dyv in (None, ""):
+                    continue
+                if math.hypot(float(dxv) - tx, float(dyv) - ty) < 1.0:
+                    false_track = True
+                    break
+
             conf = t.get("confidence")
             conf_s = f", c={float(conf):.2f}" if conf not in (None, "") else ""
-            lbl = self.ax.text(tx + 0.7, ty + 0.7, f"{t.get('track_id', '')} [{status}]{conf_s}",
-                                fontsize=6, color=tcolor)
+            kind = "predicted" if is_predicted else "filtered"
+            false_s = " [FALSE-TRACK?]" if false_track else ""
+            lbl = self.ax.text(
+                tx + 0.7, ty + 0.7, f"{t.get('track_id', '')} [{status}/{kind}]{conf_s}{false_s}",
+                fontsize=6, color="crimson" if false_track else tcolor)
             self.radar_artists.append(lbl)
 
         # Tag the existing perceived-obstacle marker as "fused" when this
@@ -483,6 +728,169 @@ Fusion: {fusion_mode}"""
                 lbl = self.ax.text(float(px), float(py) + 1.6, "fused",
                                     fontsize=6, color=color, ha="center")
                 self.radar_artists.append(lbl)
+
+    def _draw_aux_overlay(self, sensor_data: "AuxSensorData", marker_char: str,
+                           step: int, uav_id: int, color):
+        """Draws one auxiliary point-sensor's (vision or LiDAR) measured
+        detection position, confidence/reliability ("trust"), covariance
+        ellipse, and stale-measurement indicator for one UAV at one step.
+        Rows with no measured_x/y this step (out of FOV/range, occluded, a
+        missed detection roll, weather dropout, ...) are skipped - there's
+        nothing to plot for them."""
+        label = sensor_data.sensor_label
+        base_color = "saddlebrown" if label == "lidar" else "teal"
+        for d in sensor_data.detections.get((step, uav_id), []):
+            mx, my = d.get("measured_x"), d.get("measured_y")
+            if mx in (None, "") or my in (None, ""):
+                continue
+            mx, my = float(mx), float(my)
+
+            is_stale = d.get("is_stale") in ("True", True)
+            is_clutter = d.get("is_clutter") in ("True", True)
+            conf = d.get("confidence_score")
+            rel = d.get("sensor_reliability")
+
+            mcolor = "darkorange" if is_clutter else base_color
+            alpha = 0.35 if is_stale else 0.9
+            (pt,) = self.ax.plot(mx, my, marker_char, color=mcolor, markersize=7, alpha=alpha)
+            self.radar_artists.append(pt)
+
+            tag = label[0].upper()
+            conf_s = f"{float(conf):.2f}" if conf not in (None, "") else "?"
+            rel_s = f"/t={float(rel):.2f}" if rel not in (None, "") else ""
+            stale_s = " *STALE*" if is_stale else ""
+            lbl = self.ax.text(mx + 0.5, my - 0.9, f"{tag}:{conf_s}{rel_s}{stale_s}",
+                                fontsize=6, color=mcolor)
+            self.radar_artists.append(lbl)
+
+            if self.show_covariance:
+                cov_json = d.get("covariance")
+                if cov_json:
+                    try:
+                        cov3 = json.loads(cov_json)
+                        # Both vision's and LiDAR's 3x3 covariance carry
+                        # their position-uncertainty terms in the top-left
+                        # 2x2 block (isotropic for vision; range/position
+                        # for LiDAR, used here as an x/y proxy).
+                        cov2 = [[cov3[0][0], 0.0], [0.0, cov3[1][1]]]
+                        ell = _covariance_ellipse(
+                            mx, my, cov2, n_std=2.0, edgecolor=mcolor, facecolor="none",
+                            linestyle=":", linewidth=0.8, alpha=0.5)
+                        if ell is not None:
+                            self.ax.add_patch(ell)
+                            self.radar_artists.append(ell)
+                    except (ValueError, TypeError, IndexError, json.JSONDecodeError):
+                        pass
+
+    def _draw_fusion_overlay(self, step: int, colors, uav_positions: Dict[int, Tuple[float, float]]):
+        """Draws every fused estimate reported for this step: a star marker
+        (gold for a single shared centralized estimate, UAV-colored for
+        each UAV's own local distributed estimate), its confidence/#
+        sources/staleness, an approximate covariance ellipse when a
+        position_variance is available, and - for the distributed
+        architecture - the inter-UAV communication links this estimate
+        actually drew on, plus a dropped-link indicator for swarm-mates
+        that didn't make it into this UAV's local fusion this step."""
+        rows = self.fused_data.rows_by_step.get(step, [])
+        if not rows:
+            return
+
+        all_uav_ids = list(uav_positions.keys())
+
+        for row in rows:
+            arch = row.get("architecture", "centralized")
+            local_uav = row.get("local_uav_id")
+            is_centralized = local_uav in (None, "", "None")
+
+            try:
+                fx, fy = float(row["fused_x"]), float(row["fused_y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            conf = row.get("fused_confidence")
+            n_src = row.get("num_sources")
+            is_stale = row.get("is_stale") in ("True", True)
+
+            if is_centralized:
+                mcolor = "gold"
+                anchor_uav = None
+            else:
+                anchor_uav = int(local_uav)
+                mcolor = colors[anchor_uav % len(colors)]
+
+            (pt,) = self.ax.plot(
+                fx, fy, "*", color=mcolor, markersize=15 if is_centralized else 12,
+                alpha=0.4 if is_stale else 0.95, markeredgecolor="black", markeredgewidth=0.6)
+            self.radar_artists.append(pt)
+
+            tag = "FUSED" if is_centralized else f"FUSED[U{anchor_uav}]"
+            conf_s = f", c={float(conf):.2f}" if conf not in (None, "") else ""
+            n_s = f", n={n_src}" if n_src not in (None, "") else ""
+            stale_s = " STALE" if is_stale else ""
+            lbl = self.ax.text(
+                fx + 0.7, fy - 1.1, f"{tag} ({arch}{n_s}){conf_s}{stale_s}",
+                fontsize=6, color=mcolor, fontweight="bold")
+            self.radar_artists.append(lbl)
+
+            if self.show_covariance:
+                pos_var = row.get("position_variance")
+                if pos_var not in (None, ""):
+                    try:
+                        var = float(pos_var)
+                        if var > 0:
+                            side = 2 * 2.0 * math.sqrt(var)  # 2-sigma, isotropic approximation
+                            ellipse = patches.Ellipse(
+                                (fx, fy), width=side, height=side, angle=0,
+                                edgecolor=mcolor, facecolor="none", linestyle="--",
+                                linewidth=1.0, alpha=0.5)
+                            self.ax.add_patch(ellipse)
+                            self.radar_artists.append(ellipse)
+                    except (TypeError, ValueError):
+                        pass
+
+            # Inter-UAV communication links + packet-dropout indication:
+            # only meaningful for the distributed architecture, where each
+            # UAV's local fused estimate is built from whatever peer
+            # broadcasts actually arrived this step.
+            if arch == "distributed" and anchor_uav is not None and anchor_uav in uav_positions:
+                contributors = _parse_contributor_uav_ids(row.get("source_track_ids"))
+                contributors.discard(anchor_uav)
+                ax_pos = uav_positions[anchor_uav]
+                for other in all_uav_ids:
+                    if other == anchor_uav or other not in uav_positions:
+                        continue
+                    ox2, oy2 = uav_positions[other]
+                    delivered = other in contributors
+                    (line,) = self.ax.plot(
+                        [ax_pos[0], ox2], [ax_pos[1], oy2],
+                        color=(colors[other % len(colors)] if delivered else "red"),
+                        linestyle="-" if delivered else ":",
+                        alpha=0.35 if delivered else 0.55,
+                        linewidth=1.2 if delivered else 1.0)
+                    self.radar_artists.append(line)
+                    if not delivered:
+                        mx, my = (ax_pos[0] + ox2) / 2.0, (ax_pos[1] + oy2) / 2.0
+                        drop_lbl = self.ax.text(
+                            mx, my, "x", fontsize=9, color="red", ha="center",
+                            va="center", fontweight="bold")
+                        self.radar_artists.append(drop_lbl)
+
+    def _fusion_architecture_summary(self, step: int) -> str:
+        """One-line architecture/comm summary for the info box: which
+        architecture is active this step, and (for distributed) how many
+        of the attempted inter-UAV broadcasts were actually delivered."""
+        rows = self.fused_data.rows_by_step.get(step, [])
+        if not rows:
+            return ""
+        archs = {r.get("architecture", "centralized") for r in rows}
+        if "distributed" in archs:
+            attempted = next((r.get("comm_messages") for r in rows if r.get("comm_messages") not in (None, "")), None)
+            delivered = next((r.get("comm_messages_delivered") for r in rows
+                               if r.get("comm_messages_delivered") not in (None, "")), None)
+            if attempted not in (None, "") and delivered not in (None, ""):
+                return f"distributed ({delivered}/{attempted} msgs delivered)"
+            return "distributed"
+        return "centralized"
 
     def _radar_error_summary(self, step: int) -> str:
         """Aggregates this step's radar-level error flags (dropout, false
@@ -517,9 +925,26 @@ Fusion: {fusion_mode}"""
                 Line2D([0], [0], marker="x", color="w", markeredgecolor="gray", markersize=8, label="Radar Detection"),
                 Line2D([0], [0], marker="^", color="w", markerfacecolor="magenta", markersize=8, label="False Alarm / Clutter"),
                 Line2D([0], [0], marker="o", color="w", markerfacecolor="none", markeredgecolor="gray", markersize=8, label="Missed Detection"),
-                Line2D([0], [0], marker="D", color="w", markerfacecolor="gray", markersize=8, label="Radar Track"),
+                Line2D([0], [0], marker="d", color="w", markerfacecolor="none", markeredgecolor="slateblue", markersize=8, label="Predicted Track (coasting)"),
+                Line2D([0], [0], marker="D", color="w", markerfacecolor="gray", markersize=8, label="Filtered Track (updated)"),
+                patches.Patch(facecolor="gray", alpha=0.15, label="Track Covariance (2-sigma)"),
+                Line2D([0], [0], color="gray", alpha=0.4, label="Track History"),
+                Line2D([0], [0], marker="D", color="w", markerfacecolor="crimson", markersize=8, label="Possible False Track"),
             ]
-        self.ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
+        if self.vision_data is not None:
+            legend_elements.append(
+                Line2D([0], [0], marker="*", color="w", markerfacecolor="teal", markersize=9, label="Vision Detection"))
+        if self.lidar_data is not None:
+            legend_elements.append(
+                Line2D([0], [0], marker="P", color="w", markerfacecolor="saddlebrown", markersize=9, label="LiDAR Detection"))
+        if self.fused_data is not None:
+            legend_elements += [
+                Line2D([0], [0], marker="*", color="w", markerfacecolor="gold", markersize=11, label="Fused Track (centralized)"),
+                Line2D([0], [0], marker="*", color="w", markerfacecolor="gray", markersize=11, label="Fused Track (distributed, per-UAV)"),
+                Line2D([0], [0], color="gray", alpha=0.4, label="Comm Link (delivered)"),
+                Line2D([0], [0], color="red", linestyle=":", label="Comm Link (dropped)"),
+            ]
+        self.ax.legend(handles=legend_elements, loc="upper right", fontsize=8)
 
     def save_animation(self, output_path: str, fps: int = 5, dpi: int = 80):
         """Generate and save animation as MP4 or GIF."""
@@ -780,7 +1205,9 @@ def generate_fusion_comparison_video(
 
 def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = "logs",
                     media_dir: str = "media", fps: int = 5, show_popups: bool = True,
-                    radar_log: Optional[str] = None, track_log: Optional[str] = None) -> int:
+                    radar_log: Optional[str] = None, track_log: Optional[str] = None,
+                    vision_log: Optional[str] = None, lidar_log: Optional[str] = None,
+                    fused_log: Optional[str] = None) -> int:
     """Default (no-args) behavior: for every scenario declared in the config,
     load its run1 log, pop up an auto-playing preview, and save an MP4 to
     media/. Scenario list is read from the config (not hardcoded) so this
@@ -789,12 +1216,13 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
     generates a side-by-side fusion-mode comparison video if enough of
     those scenarios' logs are present.
 
-    radar_log/track_log (if given and present on disk) are the combined,
-    multi-scenario CSVs radar_like_model.py / radar_track_model.py write;
-    each scenario's rows are filtered out of them automatically, and the
-    sensing range/FOV drawn per scenario come from this same config file
-    via _resolve_radar_params(), so the overlay always matches what that
-    scenario's radar model actually used."""
+    radar_log/track_log/vision_log/lidar_log/fused_log (if given and
+    present on disk) are the combined, multi-scenario CSVs the
+    corresponding model scripts write; each scenario's rows are filtered
+    out of them automatically, and the sensing range/FOV drawn per
+    scenario come from this same config file via _resolve_radar_params(),
+    so the overlay always matches what that scenario's radar model
+    actually used."""
     with open(config_path) as f:
         config = json.load(f)
     scenario_names = list(config["scenarios"].keys())
@@ -803,6 +1231,12 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
     print(f"Batch mode: {len(scenario_names)} scenario(s) from {config_path}\n")
     if radar_log and os.path.exists(radar_log):
         print(f"  radar overlay: {radar_log}" + (f" + {track_log}" if track_log else "") + "\n")
+    if vision_log and os.path.exists(vision_log):
+        print(f"  vision overlay: {vision_log}\n")
+    if lidar_log and os.path.exists(lidar_log):
+        print(f"  lidar overlay: {lidar_log}\n")
+    if fused_log and os.path.exists(fused_log):
+        print(f"  fused-track overlay: {fused_log}\n")
 
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     if not ffmpeg_ok:
@@ -827,9 +1261,15 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
             radar_data = RadarData.from_csvs(name, radar_log, track_log)
             radar_range, radar_fov = _resolve_radar_params(config, name)
 
+        vision_data = AuxSensorData.from_csv(vision_log, name, "vision") if vision_log else None
+        lidar_data = AuxSensorData.from_csv(lidar_log, name, "lidar") if lidar_log else None
+        fused_data = FusedTrackData.from_csv(fused_log, name) if fused_log else None
+
         if show_popups:
             viz = SimulationVisualizer(data, radar_data=radar_data,
-                                        radar_range=radar_range, radar_fov_deg=radar_fov)
+                                        radar_range=radar_range, radar_fov_deg=radar_fov,
+                                        vision_data=vision_data, lidar_data=lidar_data,
+                                        fused_data=fused_data)
             try:
                 viz.play_auto(fps=fps)
             except Exception as e:
@@ -843,7 +1283,9 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
         # torn it down on a real GUI backend), so build a fresh visualizer
         # for saving rather than reusing a figure that's no longer alive.
         viz = SimulationVisualizer(data, radar_data=radar_data,
-                                    radar_range=radar_range, radar_fov_deg=radar_fov)
+                                    radar_range=radar_range, radar_fov_deg=radar_fov,
+                                    vision_data=vision_data, lidar_data=lidar_data,
+                                    fused_data=fused_data)
         out_path = os.path.join(media_dir, f"{name}_video.mp4")
         try:
             viz.save_animation(out_path, fps=fps, dpi=100)
@@ -925,6 +1367,178 @@ def run_live_scenario(scenario_name: str, config_path: str = "simulation_config.
     return metrics
 
 
+# ---------------------------------------------------------------------------
+# Advanced demo video suite (Task 22)
+# ---------------------------------------------------------------------------
+
+def _run_full_stack(config: dict, scenario_name: str, architecture: str = "centralized",
+                     seed: Optional[int] = None, fusion_mode_override: Optional[str] = None,
+                     use_adaptive_trust: bool = True):
+    """Runs the sensor -> Kalman-track -> fusion pipeline for one
+    scenario/architecture entirely in memory (Simulation -> RadarLikeModel
+    -> radar_track_model.build_tracks -> fusion_model.build_fused_log) and
+    returns (SimulationData, RadarData, FusedTrackData, radar_model) ready
+    to hand straight to SimulationVisualizer - no pre-existing CSV logs
+    required. Used by generate_advanced_demo_videos below."""
+    from radar_like_model import RadarLikeModel
+    from radar_track_model import build_tracks
+    from fusion_model import build_fused_log
+
+    cfg = copy.deepcopy(config)
+    if seed is not None:
+        cfg.setdefault("sim", {})["seed"] = seed
+    if fusion_mode_override is not None:
+        cfg["scenarios"][scenario_name]["fusion_mode"] = fusion_mode_override
+
+    radar_model = RadarLikeModel(cfg, scenario_name)
+    detection_rows = radar_model.run()
+    dt = cfg["sim"]["dt"]
+    track_rows = build_tracks(scenario_name, detection_rows, dt, radar_model.range_noise_std)
+    fused_rows = build_fused_log(scenario_name, cfg, architecture=architecture,
+                                  seed=seed, use_adaptive_trust=use_adaptive_trust)
+
+    sim_data = SimulationData.from_rows(radar_model.sim.log_rows)
+    radar_data = RadarData.from_rows(detection_rows, track_rows)
+    fused_data = FusedTrackData.from_rows(fused_rows)
+
+    return sim_data, radar_data, fused_data, radar_model
+
+
+# name -> (scenario, architecture, display title). Scenario names match
+# simulation_config.json; each is chosen to specifically exercise the demo
+# it's named for (see simulation_config.json for the full scenario set).
+ADVANCED_DEMOS = [
+    dict(name="kalman_tracking_example", scenario="baseline",
+         architecture="centralized", title="Kalman Tracking Example"),
+    dict(name="target_crossing_example", scenario="target_crossing",
+         architecture="centralized", title="Target Crossing Example"),
+    dict(name="clutter_stress_test", scenario="high_clutter",
+         architecture="centralized", title="Clutter Stress Test"),
+    dict(name="sensor_dropout_recovery", scenario="target_reappearing_after_dropout",
+         architecture="centralized", title="Sensor Dropout Recovery"),
+    dict(name="overconfident_faulty_sensor", scenario="overconfident_faulty_sensor",
+         architecture="centralized", title="Overconfident Faulty Sensor"),
+    dict(name="dynamic_trust_adaptation", scenario="faulty_sensor_trust_weighted_fusion_dynamic",
+         architecture="centralized", title="Dynamic Trust Adaptation"),
+    dict(name="communication_outage_scenario", scenario="communication_outage",
+         architecture="distributed", title="Communication Outage Scenario"),
+]
+
+
+def generate_advanced_demo_videos(config_path: str = "simulation_config.json",
+                                   media_dir: str = "media", fps: int = 5,
+                                   figsize: Tuple[int, int] = (12, 10),
+                                   seed: Optional[int] = None) -> Dict[str, bool]:
+    """Generates the full suite of advanced, sensor-fusion-aware demo
+    videos: Kalman tracking, target crossing, a clutter stress test,
+    sensor-dropout recovery, an overconfident faulty sensor, dynamic trust
+    adaptation, a communication-outage scenario, and a dedicated
+    centralized-vs-distributed fusion comparison. Every video is built
+    entirely in memory via _run_full_stack (no pre-existing CSV logs
+    needed) and renders every overlay this module supports: predicted/
+    filtered track position, covariance ellipses, track status/history,
+    false-track flags, fused tracks, and (for the distributed run)
+    inter-UAV communication links with packet-dropout indication."""
+    with open(config_path) as f:
+        config = json.load(f)
+    os.makedirs(media_dir, exist_ok=True)
+    scenario_names = set(config["scenarios"].keys())
+
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    if not ffmpeg_ok:
+        print("NOTE: ffmpeg not found on PATH - advanced demo videos will be skipped.")
+
+    results: Dict[str, bool] = {}
+
+    for demo in ADVANCED_DEMOS:
+        name, scenario, architecture = demo["name"], demo["scenario"], demo["architecture"]
+        if scenario not in scenario_names:
+            print(f"SKIP {name}: scenario '{scenario}' not found in {config_path}")
+            results[name] = False
+            continue
+
+        print(f"{name}: running '{scenario}' [{architecture}] ...")
+        try:
+            sim_data, radar_data, fused_data, radar_model = _run_full_stack(
+                config, scenario, architecture=architecture, seed=seed)
+        except Exception as e:
+            print(f"  FAILED to build data for {name}: {e}")
+            results[name] = False
+            continue
+
+        sim_data.scenario_name = demo["title"]
+
+        if not ffmpeg_ok:
+            results[name] = False
+            continue
+
+        viz = SimulationVisualizer(
+            sim_data, figsize=figsize, radar_data=radar_data,
+            radar_range=radar_model.radar_max_range,
+            radar_fov_deg=radar_model.radar_field_of_view,
+            fused_data=fused_data)
+        out_path = os.path.join(media_dir, f"{name}.mp4")
+        try:
+            viz.save_animation(out_path, fps=fps, dpi=100)
+            results[name] = True
+        except Exception as e:
+            print(f"  video save failed for {name}: {e}")
+            results[name] = False
+
+    # Dedicated centralized-vs-distributed comparison, sharing one figure -
+    # same scenario, run once under each fusion architecture.
+    print("centralized_vs_distributed_fusion: building both architectures ...")
+    try:
+        comparison_scenario = ("trust_weighted_fusion" if "trust_weighted_fusion" in scenario_names
+                                else next(iter(scenario_names)))
+        panels = []
+        for architecture in ("centralized", "distributed"):
+            sim_data, radar_data, fused_data, radar_model = _run_full_stack(
+                config, comparison_scenario, architecture=architecture, seed=seed)
+            sim_data.scenario_name = f"{comparison_scenario} [{architecture}]"
+            panels.append((architecture, sim_data, radar_data, fused_data, radar_model))
+
+        if ffmpeg_ok:
+            fig, axes = plt.subplots(1, len(panels), figsize=(6.5 * len(panels), 6.5))
+            if len(panels) == 1:
+                axes = [axes]
+            visualizers = []
+            for ax, (architecture, sim_data, radar_data, fused_data, radar_model) in zip(axes, panels):
+                viz = SimulationVisualizer(
+                    sim_data, fig=fig, ax=ax, radar_data=radar_data,
+                    radar_range=radar_model.radar_max_range,
+                    radar_fov_deg=radar_model.radar_field_of_view,
+                    fused_data=fused_data)
+                visualizers.append(viz)
+            max_steps = max(v.data.steps for v in visualizers)
+
+            def animate(frame):
+                for v in visualizers:
+                    step = min(frame, v.data.steps - 1)
+                    v.render_step(step)
+                return []
+
+            anim = animation.FuncAnimation(fig, animate, frames=max_steps,
+                                            interval=1000 // fps, repeat=True)
+            fig.suptitle("Centralized vs Distributed Fusion", fontsize=14, fontweight="bold")
+            fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+            out_path = os.path.join(media_dir, "centralized_vs_distributed_fusion.mp4")
+            writer = animation.FFMpegWriter(fps=fps)
+            anim.save(out_path, writer=writer, dpi=100)
+            plt.close(fig)
+            results["centralized_vs_distributed_fusion"] = True
+            print(f"  saved {out_path}")
+        else:
+            results["centralized_vs_distributed_fusion"] = False
+    except Exception as e:
+        print(f"  FAILED centralized_vs_distributed_fusion: {e}")
+        results["centralized_vs_distributed_fusion"] = False
+
+    success = sum(1 for v in results.values() if v)
+    print(f"\nAdvanced demo videos: {success}/{len(results)} saved to {media_dir}/")
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Visualize UAV swarm simulation from CSV logs. "
@@ -977,14 +1591,38 @@ def main():
         "--radar-log", default=None,
         help="Path to the combined radar detection CSV from radar_like_model.py "
         "(e.g. logs/radar_log.csv). When given, adds sensing range, FOV, "
-        "detections, false alarms/clutter, and missed-detection markers to "
-        "the plot. Optional - omit to visualize without the radar overlay.",
+        "detections, false alarms/clutter, missed-detection markers, and "
+        "Kalman track overlays (predicted/filtered position, covariance "
+        "ellipse, status, history, false-track flag) to the plot. Optional - "
+        "omit to visualize without the radar overlay.",
     )
     parser.add_argument(
         "--track-log", default=None,
         help="Path to the combined radar track CSV from radar_track_model.py "
         "(e.g. logs/radar_track_log.csv). Adds track ID/status/confidence "
         "markers on top of --radar-log. Optional.",
+    )
+    parser.add_argument(
+        "--vision-log", default=None,
+        help="Path to the combined vision detection CSV from vision_like_model.py "
+        "(e.g. logs/vision_log.csv). Adds vision measurement position, "
+        "confidence, sensor-reliability ('trust'), covariance ellipse, and "
+        "stale-measurement markers. Optional.",
+    )
+    parser.add_argument(
+        "--lidar-log", default=None,
+        help="Path to the combined LiDAR detection CSV from lidar_like_model.py "
+        "(e.g. logs/lidar_log.csv). Same overlay as --vision-log, for LiDAR. "
+        "Optional.",
+    )
+    parser.add_argument(
+        "--fused-log", default=None,
+        help="Path to the combined fused-track CSV from fusion_model.py "
+        "(e.g. logs/fused_track_log.csv). Adds fused-track markers "
+        "(centralized shared estimate, or per-UAV distributed estimates), "
+        "fusion architecture labeling, and - for distributed rows - "
+        "inter-UAV communication links with packet-dropout indication. "
+        "Optional.",
     )
     parser.add_argument(
         "--no-popup", action="store_true",
@@ -994,6 +1632,14 @@ def main():
         "--fusion-comparison", action="store_true",
         help="Generate only the side-by-side fusion-mode comparison video "
         "from --logs-dir into --media-dir and exit.",
+    )
+    parser.add_argument(
+        "--advanced-demos", action="store_true",
+        help="Generate the full advanced demo video suite (Kalman tracking, "
+        "target crossing, clutter stress test, sensor-dropout recovery, "
+        "overconfident faulty sensor, centralized-vs-distributed fusion, "
+        "dynamic trust adaptation, communication outage) into --media-dir "
+        "and exit. Builds everything in memory - no logs need to exist yet.",
     )
     parser.add_argument(
         "--scenario", default=None,
@@ -1014,6 +1660,10 @@ def main():
         "frame on screen before closing each scenario's window (default: 2.0)",
     )
     args = parser.parse_args()
+
+    if args.advanced_demos:
+        generate_advanced_demo_videos(args.config, args.media_dir, args.fps, tuple(args.figsize))
+        return 0
 
     if args.fusion_comparison:
         generate_fusion_comparison_video(args.logs_dir, args.media_dir, args.fps)
@@ -1046,7 +1696,9 @@ def main():
     if args.log is None:
         return batch_generate(args.config, args.logs_dir, args.media_dir, args.fps,
                                show_popups=not args.no_popup,
-                               radar_log=args.radar_log, track_log=args.track_log)
+                               radar_log=args.radar_log, track_log=args.track_log,
+                               vision_log=args.vision_log, lidar_log=args.lidar_log,
+                               fused_log=args.fused_log)
 
     # Validate inputs
     if not os.path.exists(args.log):
@@ -1090,8 +1742,14 @@ def main():
                 radar_config = json.load(f)
             radar_range, radar_fov = _resolve_radar_params(radar_config, data.scenario_name)
 
+    vision_data = AuxSensorData.from_csv(args.vision_log, data.scenario_name, "vision") if args.vision_log else None
+    lidar_data = AuxSensorData.from_csv(args.lidar_log, data.scenario_name, "lidar") if args.lidar_log else None
+    fused_data = FusedTrackData.from_csv(args.fused_log, data.scenario_name) if args.fused_log else None
+
     viz = SimulationVisualizer(data, figsize=tuple(args.figsize), radar_data=radar_data,
-                                radar_range=radar_range, radar_fov_deg=radar_fov)
+                                radar_range=radar_range, radar_fov_deg=radar_fov,
+                                vision_data=vision_data, lidar_data=lidar_data,
+                                fused_data=fused_data)
 
     if args.mode == "interactive":
         viz.show_interactive()
