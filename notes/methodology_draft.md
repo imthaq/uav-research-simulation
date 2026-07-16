@@ -148,3 +148,226 @@ Quantitative and qualitative analysis are combined:
 - Expand the single-factor sensitivity sweep to multiple levels per parameter (e.g. low/medium/high false-positive rate) rather than one tested level each. 
 - Add time-to-goal as an explicit, first-class output metric rather than something only recoverable indirectly from step counts. 
 - Extend the environment to multiple or dynamic obstacles, and optionally three dimensions, and treat swarm size (currently fixed at 4) as a tested variable, if the prototype's findings justify the added complexity. 
+---
+
+## Methodology Update: Radar-Like Sensing, Multimodal Fusion, and Experiment Design
+
+Everything above describes the original prototype: geometric detection, a
+single fixed noise value, and three fusion modes. The simulation has since
+grown a full probabilistic sensor stack, multiple fusion architectures, and
+a proper experiment/analysis pipeline on top of it. This section documents
+what was added, grounded in what's actually implemented today.
+
+### Probabilistic radar measurement model
+Every reported measurement (a real detection or a confirmed clutter false
+alarm) now carries explicit measurement uncertainty instead of a single
+fixed noise value applied blindly. `radar_like_model.py` computes, per
+detection, a probability of detection and a probability of false alarm
+that are *recomputed each time* from the target's SNR, the environmental
+condition, and the radar's own reliability state - rather than reading one
+static config number every time. This is what actually gates the
+Bernoulli detection roll and the clutter-confirmation roll, so a distant
+or degraded-condition target is genuinely harder to detect, not just
+logged afterward as "should have been harder to detect."
+
+### Range-dependent sensing behavior
+Signal quality falls off with range following a radar-equation-style SNR
+proxy (`_snr_db_for_range`, 4th-power falloff by default), squashed to a
+`[0,1]` measurement-quality factor (`_quality_from_snr`). That quality
+factor scales every measurement's variance up and its effective
+probability of detection down as range increases - so a target near the
+edge of `radar_max_range` is both noisier and more likely to be missed
+than one close to the radar, instead of every in-range detection being
+equally trustworthy. Two categorical knobs compound this:
+`radar_environmental_condition` (clear/rain/fog/storm) and
+`radar_reliability_state` (nominal/degraded/critical), each degrading
+noise, PD, and PFA by its own multiplier.
+
+### Measurement covariance
+Each detection reports a 3x3 covariance matrix over
+`(range, bearing, radial_velocity)`, serialized as `measurement_covariance`
+in the CSV row. Channels are modeled independently (diagonal covariance)
+- there's no cross-channel correlation model - but every diagonal entry
+scales with range, environmental condition, and reliability state, so the
+covariance a UAV reports is an honest reflection of how uncertain that
+particular measurement actually is, not a constant.
+
+### Clutter distribution
+Radar false alarms are generated independently of the older
+`false_positive_rate` "phantom" mechanism. Each step, the number of
+clutter candidate returns is drawn from `clutter_distribution` -
+`"poisson"` (default, rate `clutter_lambda`) or `"fixed"`
+(`round(clutter_lambda)` every step) - positioned uniformly inside a
+`[clutter_range_min, clutter_range_max]` annulus around the radar,
+independent of the real-target detection range window. Each candidate is
+then confirmed as a reported false detection with probability
+`radar_false_alarm_probability` (itself scaled by the environmental/
+reliability multipliers), and confirmed clutter is injected into the same
+detection stream a UAV steers on, marked as phantom.
+
+### Kalman tracking
+`radar_track_model.py`'s `RadarTracker` replaced the earlier
+exponential-smoothing tracker with a proper constant-velocity Kalman
+filter per track (4-state: position + velocity), predicting forward every
+step and updating on a matched detection. Each track carries a five-state
+lifecycle - `tentative` (just created) → `confirmed` (matched
+`CONFIRM_HITS`=3 times running) → `coasting` (predicted forward on a
+miss) → `lost` (missed `MAX_MISSED`=3 times running) → `deleted` (final
+row) - plus a recursive `existence_probability` that rises on hits and
+decays on misses, giving a second, independent signal from raw track
+status.
+
+### Data association
+Detection-to-track matching uses gated nearest-neighbor association: for
+every (track, detection) pair, the Mahalanobis distance to the track's
+predicted position is computed using the filter's own innovation
+covariance, and only pairs inside the gate (`GATE_CHI2`=9.21, a
+chi-squared threshold rather than a fixed Euclidean radius) are candidate
+matches. Candidates are sorted by distance and claimed greedily, closest
+first, so each track and each detection is used at most once per step.
+The same idea is reused one level up in `fusion_model.py` for
+track-to-track association across UAVs (greedy single-linkage clustering
+by position, `CLUSTER_DISTANCE`=4.0), before those clustered tracks are
+combined by whichever fusion mode is active.
+
+### Multimodal sensor models
+Three independent sensor models now exist, each with its own detection
+probability, noise profile, field of view, and failure behavior:
+**radar** (`radar_like_model.py` - range/bearing/Doppler-like, longest
+range, the only modality currently fed into cross-UAV fusion), **vision**
+(`vision_like_model.py` - strong classification confidence but a limited
+FOV, sensitive to occlusion and lighting/environmental conditions), and
+**LiDAR** (`lidar_like_model.py` - the most accurate position/range, but
+the shortest range and prone to dropout in adverse weather). Vision and
+LiDAR are generated and logged but not yet wired into `fusion_model.py`'s
+cross-UAV combination (`_generate_vision_lidar_detections()` in
+`simple_swarm_sim.py` is the marked extension point); today's fusion
+results should be read as radar-only fusion.
+
+### Asynchronous updates
+Each sensor model has its own configurable update rate in Hz
+(`radar_update_rate`, `vision_update_rate`, etc.), converted to an
+`update_interval_steps` from the simulation's `dt` - radar and vision
+default near 5 Hz, LiDAR slower. On steps that fall between a sensor's
+actual updates, a per-UAV hold buffer re-serves the last row that sensor
+actually generated rather than fabricating a fresh reading, and every row
+carries `measurement_age_steps` / `is_stale` so downstream tracking and
+fusion can tell an actually-fresh measurement from a held-over one.
+
+### Centralized / distributed fusion
+`fusion_model.py` separates *which weighting scheme* combines tracks
+(naive/confidence/trust/covariance/CI - unchanged by this axis) from
+*where* that combination happens. **Centralized** (the default, and what
+`fuse_step` always did before this axis existed) has every UAV uplink its
+track to one node - a ground station or lead UAV - which fuses once and
+broadcasts a single shared estimate back out; one common answer, at the
+cost of an uplink+downlink round trip before anything is usable, and a
+single point of failure at the central node. **Distributed** has no
+central node: each UAV broadcasts a lightweight summary of its own track
+to its peers, and separately fuses locally over whatever peer summaries
+actually arrived that step - since each peer-to-peer broadcast can
+independently fail, different UAVs can end up with slightly different
+local estimates of the same object in the same step.
+
+### Communication uncertainty
+`communication_model.py`'s `CommunicationChannel` models what a track
+message actually has to survive to get where it's going: a per-message
+`packet_loss_probability` (outright drop), `comm_range` (sender/receiver
+pairs farther apart simply can't hear each other), `base_latency_steps`
+(fixed extra delay on top of the sender's own sensor latency),
+`max_staleness_steps` (a receiver hard-rejects a report older than this,
+regardless of whether it was otherwise delivered), and
+`corruption_probability` (the reported confidence/reliability value
+arrives scaled by a random factor, modeling bit errors rather than
+outright loss). This channel is what the distributed architecture's
+peer-to-peer broadcasts - and the centralized architecture's uplink/
+downlink - travel over; nothing here reads ground truth, so a receiver's
+range gating and staleness checks use only the sender's own reported
+position, exactly what a real inter-UAV link would have available.
+
+### Dynamic trust
+Everything in a track's instantaneous `reliability` score (confidence,
+status, measurement age, latency, dropout state) is recomputed from
+scratch every step, with no memory of what that source did previously - so
+a sensor that self-reports high confidence every single step looks fine
+even if it was wrong every one of those steps too. `TrustTracker` (in
+`fusion_model.py`) adds a second, slow-moving `persistent_trust` score per
+UAV/radar that *does* carry memory across a run: it decays when a source's
+estimate repeatedly disagrees with its cluster-mates, is corroborated by
+nobody while others nearby are seeing something, goes stale, or drops out
+often; it recovers, more gradually than it decays, when the source starts
+agreeing again, reports fresh data, or its confidence/covariance improve.
+`persistent_trust` is folded directly into the same composite reliability
+score every fusion mode already reads, so dynamic trust benefits
+covariance-weighted fusion too, not only `trust_weighted_fusion`.
+
+### Monte Carlo experiment design
+`run_experiments.py` runs every scenario for a configurable number of
+repeated trials (`--trials`, defaulting to `config["reproducibility"]
+["trial_count"]`), each trial re-seeded so the run captures a scenario's
+*distribution* of outcomes rather than one run's outcome - necessary
+whenever a scenario has run-to-run variance from noise, dropout, or
+fusion-mode comparisons. Two seed strategies are supported: `sequential`
+(seed = base_seed + trial - 1, shared across scenarios, so trial N of
+every scenario is comparable at matched noise draws) and `random`
+(independent per-(scenario, trial) seeds from a single seeded RNG stream,
+for a genuine unyoked Monte Carlo sweep). Guidance embedded in the runner:
+>= 20 trials for exploratory analysis, 50-100 for paper-ready results
+(with `--skip-step-logs` to drop the dominant per-trial-log disk/time cost
+at that scale).
+
+### Statistical analysis
+`statistical_analysis.py` turns the raw per-run results into inferential
+statistics rather than just descriptive averages: means/standard
+deviations/confidence intervals per scenario and fusion mode, Cohen's d
+effect size between fusion modes, correlation between perception
+parameters (noise, dropout, latency, ...) and outcome metrics,
+ANOVA/Kruskal-Wallis tests across fusion modes, paired comparisons (e.g.
+naive vs. trust-weighted on the same seeds), and significance tests
+specifically on mission success, collision risk, and response time - so a
+claim like "trust-weighted fusion is better" can be backed by a
+significance test on matched trials, not just a difference in sample
+means.
+
+### Ablation study
+`ablation_experiments.py` isolates each fusion/tracking component's
+individual contribution by disabling exactly one at a time and re-running
+a subset of scenarios: no radar tracking (detection probability forced to
+0), no confidence estimation (confidence forced to 1.0 for every source),
+no trust weighting (forced to `naive_fusion`), no covariance weighting, no
+sensor latency, no stale-data rejection (dropout/age decay disabled), no
+inter-UAV communication/fusion at all (forced to `no_fusion`), and no
+dynamic trust adaptation. Each ablated variant's fusion error, collision
+risk, mission success, response time, and formation error are compared
+against the full system, so a claim that a given component matters is
+backed by "removing it made things measurably worse," not assumed from
+the design alone.
+
+### Stress testing
+`stress_test_results.md` pushes the system to its failure boundaries
+rather than only its typical operating range: 12 scenarios covering very
+low probability-of-detection, very high false-alarm rate, heavy clutter,
+high latency, high dropout, several simultaneous sensor failures at once,
+a full communication outage, closely-crossing targets, a suddenly-
+appearing hazard, a fast-approaching obstacle, an overconfident-but-wrong
+("liar") sensor, and a deliberately wrong trust initialization. Each is
+documented with expected vs. actual behavior, the specific failure point
+(the parameter value or duration at which the system stops coping
+gracefully), the recovery behavior once conditions improve, and a
+qualitative safety-implication rating - so the system's resilience
+boundaries are characterized explicitly instead of only reporting
+average-case metrics that stay silent about how it fails.
+
+### Reproducibility procedure
+Every experiment run is traceable back to exactly the conditions that
+produced it. `simulation_config.json`'s `reproducibility` block records
+the trial count and output location a run defaults to (still overridable
+per-invocation via CLI flags) alongside the tracker's lifecycle/gating
+constants. `run_experiments.py` writes an `experiment_metadata.json`
+alongside every results batch containing: the full resolved config used
+(plus a SHA-256 fingerprint of it, for a cheap drift check without
+re-diffing the whole file), the trial count, base seed and seed-mode, the
+exact per-scenario seed list actually used, every output file path the
+run wrote to, wall-clock duration, and the environment (Python version,
+platform) it ran on. Any results CSV can therefore be traced back to a
+metadata file recording precisely the config and seeds that generated it.
