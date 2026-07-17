@@ -1,0 +1,13 @@
+scenario_id,radar_configuration,environment,fusion_mode,architecture,communication_condition,trial_count,seed_range,output_directory
+baseline,"P_D=1.0, P_FA=0.0, clutter_density=0.0, range_noise_std=0.3, bearing_noise_std=0.0342, radial_velocity_noise_std=0.1, latency_steps=0, dropout_probability=0.0, confidence_error=0.0",clear (default),no_fusion,centralized,perfect (default),20,42-61,logs/ (baseline_run<N>.csv)
+very_low_P_D,"P_D=0.1, P_FA=0.0, clutter_density=0.0, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (very_low_P_D_run<N>.csv)
+very_high_P_FA,"P_D=1.0, P_FA=0.4, clutter_density=0.0, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (very_high_P_FA_run<N>.csv)
+high_clutter,"P_D=1.0, P_FA=0.0, clutter_density=0.5, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_clutter_run<N>.csv)
+sensor_noise,defaults (no radar-model override),clear (default),no_fusion,centralized,perfect (default),20,42-61,logs/ (sensor_noise_run<N>.csv)
+high_latency,"P_D=1.0, P_FA=0.0, clutter_density=0.0, latency_steps=20, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_latency_run<N>.csv)
+high_dropout,"P_D=1.0, P_FA=0.0, clutter_density=0.0, latency_steps=0, dropout_probability=0.7",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_dropout_run<N>.csv)
+high_packet_loss,defaults (no radar-model override),clear (default),trust_weighted_fusion,distributed,high_packet_loss,20,42-61,logs/ (high_packet_loss_run<N>.csv)
+communication_outage,defaults (no radar-model override),clear (default),trust_weighted_fusion,distributed,outage,20,42-61,logs/ (communication_outage_run<N>.csv)
+overconfident_faulty_sensor,"P_D=0.9, P_FA=0.15, clutter_density=0.0, latency_steps=3, dropout_probability=0.05, confidence_error=0.6",clear (default),confidence_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (overconfident_faulty_sensor_run<N>.csv)
+two_crossing_targets,defaults (no radar-model override),clear (default),no_fusion,centralized,perfect (default),20,42-61,logs/ (two_crossing_targets_run<N>.csv)
+rapidly_moving_obstacle,"P_D=1.0, P_FA=0.0, clutter_density=0.0, bearing_noise_std=0.15, radial_velocity_noise_std=0.4, latency_steps=5, dropout_probability=0.1",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (rapidly_moving_obstacle_run<N>.csv)
