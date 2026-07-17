@@ -1,0 +1,277 @@
+{
+  "total": 38,
+  "passed": 38,
+  "failed": 0,
+  "by_task": {
+    "zero_delay": {
+      "passed": 2,
+      "total": 2
+    },
+    "fixed_delay": {
+      "passed": 2,
+      "total": 2
+    },
+    "random_delay": {
+      "passed": 3,
+      "total": 3
+    },
+    "zero_packet_loss": {
+      "passed": 1,
+      "total": 1
+    },
+    "low_packet_loss": {
+      "passed": 3,
+      "total": 3
+    },
+    "high_packet_loss": {
+      "passed": 2,
+      "total": 2
+    },
+    "limited_range": {
+      "passed": 7,
+      "total": 7
+    },
+    "temporary_outage": {
+      "passed": 3,
+      "total": 3
+    },
+    "stale_message_rejection": {
+      "passed": 6,
+      "total": 6
+    },
+    "corrupted_confidence_value": {
+      "passed": 9,
+      "total": 9
+    }
+  },
+  "checks": [
+    {
+      "task": "zero_delay",
+      "description": "message with no base latency delivers with latency_steps=0",
+      "passed": true,
+      "detail": "outcome=delivered latency=0"
+    },
+    {
+      "task": "zero_delay",
+      "description": "zero channel delay leaves a message's pre-existing latency untouched",
+      "passed": true,
+      "detail": "got 4"
+    },
+    {
+      "task": "fixed_delay",
+      "description": "base_latency_steps=5 adds exactly 5 to every delivered message, every time",
+      "passed": true,
+      "detail": "distinct values seen=[5]"
+    },
+    {
+      "task": "fixed_delay",
+      "description": "fixed delay adds to (not replaces) a message's existing latency_steps (2+5=7)",
+      "passed": true,
+      "detail": "got 7"
+    },
+    {
+      "task": "random_delay",
+      "description": "total delivered latency = random incoming latency + fixed base_latency_steps, every trial",
+      "passed": true,
+      "detail": "distinct deltas=[4]"
+    },
+    {
+      "task": "random_delay",
+      "description": "the channel's own contribution to delay has zero variance (no injected jitter)",
+      "passed": true,
+      "detail": "variance=0"
+    },
+    {
+      "task": "random_delay",
+      "description": "total latency varies across trials because incoming latency varies (not constant)",
+      "passed": true,
+      "detail": "distinct totals seen=11"
+    },
+    {
+      "task": "zero_packet_loss",
+      "description": "packet_loss_probability=0.0 delivers 100% of 1000 messages",
+      "passed": true,
+      "detail": "delivered=1000/1000"
+    },
+    {
+      "task": "low_packet_loss",
+      "description": "packet_loss_probability=0.05 gives an observed loss rate near 5% over 5000 trials",
+      "passed": true,
+      "detail": "observed loss rate=0.0494"
+    },
+    {
+      "task": "low_packet_loss",
+      "description": "every non-lost message is marked delivered (no third outcome for a range-unlimited, non-stale channel)",
+      "passed": true,
+      "detail": "outcomes seen={'delivered', 'packet_loss'}"
+    },
+    {
+      "task": "low_packet_loss",
+      "description": "'low_packet_loss' preset (0.05) matches its documented loss rate",
+      "passed": true,
+      "detail": "observed=0.0478"
+    },
+    {
+      "task": "high_packet_loss",
+      "description": "packet_loss_probability=0.4 gives an observed loss rate near 40% over 5000 trials",
+      "passed": true,
+      "detail": "observed loss rate=0.3964"
+    },
+    {
+      "task": "high_packet_loss",
+      "description": "'high_packet_loss' preset (0.4) matches its documented loss rate",
+      "passed": true,
+      "detail": "observed=0.3924"
+    },
+    {
+      "task": "limited_range",
+      "description": "receiver within comm_range (distance 3 <= 5) is delivered",
+      "passed": true,
+      "detail": "outcome=delivered"
+    },
+    {
+      "task": "limited_range",
+      "description": "receiver beyond comm_range (distance 10 > 5) is rejected as out_of_range",
+      "passed": true,
+      "detail": "outcome=out_of_range"
+    },
+    {
+      "task": "limited_range",
+      "description": "receiver exactly at comm_range (distance == 5) is delivered (<=, not <)",
+      "passed": true,
+      "detail": "outcome=delivered"
+    },
+    {
+      "task": "limited_range",
+      "description": "comm_range=None imposes no range limit at all",
+      "passed": true,
+      "detail": "outcome=delivered"
+    },
+    {
+      "task": "limited_range",
+      "description": "missing sender_pos skips range gating (can't gate what isn't known)",
+      "passed": true,
+      "detail": "outcome=delivered"
+    },
+    {
+      "task": "limited_range",
+      "description": "'short_range' preset (comm_range=5.0) delivers just inside its range",
+      "passed": true,
+      "detail": "outcome=delivered"
+    },
+    {
+      "task": "limited_range",
+      "description": "'short_range' preset (comm_range=5.0) rejects just outside its range",
+      "passed": true,
+      "detail": "outcome=out_of_range"
+    },
+    {
+      "task": "temporary_outage",
+      "description": "'outage' preset (packet_loss_probability=1.0) drops every message while active",
+      "passed": true,
+      "detail": "outcomes seen={'packet_loss'}"
+    },
+    {
+      "task": "temporary_outage",
+      "description": "communication recovers fully once the outage condition is lifted",
+      "passed": true,
+      "detail": "outcomes seen={'delivered'}"
+    },
+    {
+      "task": "temporary_outage",
+      "description": "from_config({'preset': 'outage'}) reproduces the outage preset's total loss",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "task": "stale_message_rejection",
+      "description": "message younger than max_staleness_steps is delivered",
+      "passed": true,
+      "detail": "outcome=delivered age=1 max=3"
+    },
+    {
+      "task": "stale_message_rejection",
+      "description": "message exactly at max_staleness_steps is NOT stale (age>max, not >=)",
+      "passed": true,
+      "detail": "outcome=delivered age=3 max=3"
+    },
+    {
+      "task": "stale_message_rejection",
+      "description": "message one step past max_staleness_steps is rejected as stale",
+      "passed": true,
+      "detail": "outcome=stale age=4 max=3"
+    },
+    {
+      "task": "stale_message_rejection",
+      "description": "a very old message is rejected as stale",
+      "passed": true,
+      "detail": "outcome=stale age=1000 max=3"
+    },
+    {
+      "task": "stale_message_rejection",
+      "description": "max_staleness_steps=None never rejects for staleness, however old",
+      "passed": true,
+      "detail": "outcome=delivered"
+    },
+    {
+      "task": "stale_message_rejection",
+      "description": "staleness is checked before the packet-loss roll (reports 'stale', not 'packet_loss')",
+      "passed": true,
+      "detail": "outcome=stale"
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "corruption_probability=0.0 never corrupts confidence/reliability",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "corruption_probability=1.0 marks every delivered message corrupted=True",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "corrupted confidence values stay within the valid [0, 1] probability range",
+      "passed": true,
+      "detail": "min=0.100 max=0.899"
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "corrupted reliability values stay within the valid [0, 1] range",
+      "passed": true,
+      "detail": "min=0.100 max=0.899"
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "confidence and reliability are scaled by the same random factor per message",
+      "passed": true,
+      "detail": "confidence == reliability for every trial since both started at 0.5"
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "implied corruption factor is drawn from [0.2, 1.8] (before clamping)",
+      "passed": true,
+      "detail": "observed factor range=[0.201, 1.799]"
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "corruption actually changes the value for the large majority of trials (factor != 1)",
+      "passed": true,
+      "detail": "fraction changed=1.000"
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "a message with no confidence/reliability fields is delivered without error and gains no fabricated fields",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "task": "corrupted_confidence_value",
+      "description": "corrupting a confidence of exactly 0.0 stays exactly 0.0 (0*factor=0, already in range)",
+      "passed": true,
+      "detail": ""
+    }
+  ]
+}
