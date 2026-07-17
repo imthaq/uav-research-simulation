@@ -19,14 +19,12 @@ controlled, hand-computable cases - not against the full swarm simulation
 
 Each check is a controlled case with a known expected answer (or a known
 statistical property), asserted with a small numerical tolerance. Results
-are printed and written to results/radar_model_validation_results.json;
-radar_model_validation_results.md is the human-readable writeup.
+are printed and written to results/radar_model_validation_results.md.
 
 Usage:
     python radar_model_validation.py
 """
 
-import json
 import math
 import os
 import statistics
@@ -43,23 +41,17 @@ from models.radar_like_model import (
     _range_bearing_radial,
     _wrap_angle,
 )
+from validation_common import Checker
 
-RESULTS = []
+_checker = Checker()
 
 
 def check(task, description, condition, detail=""):
-    RESULTS.append({
-        "task": task,
-        "description": description,
-        "passed": bool(condition),
-        "detail": detail,
-    })
-    status = "PASS" if condition else "FAIL"
-    print(f"[{status}] {task}: {description}" + (f" ({detail})" if detail else ""))
+    return _checker.check(task, description, condition, detail)
 
 
 def close(a, b, tol=1e-6):
-    return abs(a - b) <= tol
+    return _checker.close(a, b, tol)
 
 
 def make_bare_model(**overrides):
@@ -417,28 +409,16 @@ def main():
     test_poisson_clutter_behavior()
     test_range_dependent_snr()
 
-    total = len(RESULTS)
-    passed = sum(1 for r in RESULTS if r["passed"])
-    failed = total - passed
-
-    by_task = {}
-    for r in RESULTS:
-        by_task.setdefault(r["task"], []).append(r["passed"])
-
-    print("\n=== Summary by task ===")
-    for task, outcomes in by_task.items():
-        print(f"  {task}: {sum(outcomes)}/{len(outcomes)} passed")
-    print(f"\nTotal: {passed}/{total} checks passed" + (f", {failed} FAILED" if failed else ""))
+    failed = _checker.print_summary()
 
     out_dir = os.path.join(_ROOT_DIR, "results")
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "radar_model_validation_results.json")
-    with open(out_path, "w") as f:
-        json.dump({
-            "total": total, "passed": passed, "failed": failed,
-            "by_task": {t: {"passed": sum(o), "total": len(o)} for t, o in by_task.items()},
-            "checks": RESULTS,
-        }, f, indent=2)
+    out_path = os.path.join(out_dir, "radar_model_validation_results.md")
+    _checker.write_markdown(
+        out_path, "Radar Model Validation Results (Task 3)",
+        intro="Controlled, hand-computable checks of the core radar equations "
+              "in `models/radar_like_model.py` (range/bearing/radial-velocity "
+              "conversion, noise, P_D/P_FA, clutter, range-dependent SNR) - "
+              "not the full swarm simulation, just the radar-domain math.")
     print(f"Detailed results written to: {out_path}")
 
     return 1 if failed else 0
