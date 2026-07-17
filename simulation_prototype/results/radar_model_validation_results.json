@@ -1,0 +1,365 @@
+{
+  "total": 52,
+  "passed": 52,
+  "failed": 0,
+  "by_task": {
+    "range_calculation": {
+      "passed": 3,
+      "total": 3
+    },
+    "bearing_calculation": {
+      "passed": 5,
+      "total": 5
+    },
+    "radial_velocity_calculation": {
+      "passed": 5,
+      "total": 5
+    },
+    "noisy_range_conversion": {
+      "passed": 3,
+      "total": 3
+    },
+    "noisy_bearing_conversion": {
+      "passed": 2,
+      "total": 2
+    },
+    "detected_xy_reconstruction": {
+      "passed": 2,
+      "total": 2
+    },
+    "covariance_dimensions": {
+      "passed": 4,
+      "total": 4
+    },
+    "pd_behavior": {
+      "passed": 7,
+      "total": 7
+    },
+    "pfa_behavior": {
+      "passed": 6,
+      "total": 6
+    },
+    "poisson_clutter_behavior": {
+      "passed": 6,
+      "total": 6
+    },
+    "range_dependent_snr": {
+      "passed": 9,
+      "total": 9
+    }
+  },
+  "checks": [
+    {
+      "task": "range_calculation",
+      "description": "3-4-5 triangle gives range=5.0",
+      "passed": true,
+      "detail": "got 5.0"
+    },
+    {
+      "task": "range_calculation",
+      "description": "range is translation-invariant (offset observer)",
+      "passed": true,
+      "detail": "got 5.0"
+    },
+    {
+      "task": "range_calculation",
+      "description": "coincident observer/target gives range=0.0",
+      "passed": true,
+      "detail": "got 0.0"
+    },
+    {
+      "task": "bearing_calculation",
+      "description": "due east -> 0 rad",
+      "passed": true,
+      "detail": "got 0.0000 rad"
+    },
+    {
+      "task": "bearing_calculation",
+      "description": "due north -> +pi/2 rad",
+      "passed": true,
+      "detail": "got 1.5708 rad"
+    },
+    {
+      "task": "bearing_calculation",
+      "description": "due west -> +/-pi rad",
+      "passed": true,
+      "detail": "got 3.1416 rad"
+    },
+    {
+      "task": "bearing_calculation",
+      "description": "due south -> -pi/2 rad",
+      "passed": true,
+      "detail": "got -1.5708 rad"
+    },
+    {
+      "task": "bearing_calculation",
+      "description": "_wrap_angle folds 3*pi into (-pi, pi]",
+      "passed": true,
+      "detail": "got -3.1416"
+    },
+    {
+      "task": "radial_velocity_calculation",
+      "description": "target moving directly away gives radial_vel=+speed",
+      "passed": true,
+      "detail": "got 3.0"
+    },
+    {
+      "task": "radial_velocity_calculation",
+      "description": "target moving directly toward observer gives radial_vel=-speed",
+      "passed": true,
+      "detail": "got -3.0"
+    },
+    {
+      "task": "radial_velocity_calculation",
+      "description": "purely tangential motion gives radial_vel=0",
+      "passed": true,
+      "detail": "got 0.0"
+    },
+    {
+      "task": "radial_velocity_calculation",
+      "description": "matching observer/target velocity gives radial_vel=0 (relative motion)",
+      "passed": true,
+      "detail": "got 0.0"
+    },
+    {
+      "task": "radial_velocity_calculation",
+      "description": "target_vel=None gives radial_vel=None",
+      "passed": true,
+      "detail": "got None"
+    },
+    {
+      "task": "noisy_range_conversion",
+      "description": "zero-noise range equals true range (6-8-10 triangle)",
+      "passed": true,
+      "detail": "got 10.0"
+    },
+    {
+      "task": "noisy_bearing_conversion",
+      "description": "zero-noise bearing equals true bearing",
+      "passed": true,
+      "detail": "got 0.9272952180016122"
+    },
+    {
+      "task": "noisy_range_conversion",
+      "description": "sampled range noise std matches configured range_noise_std (~2.0)",
+      "passed": true,
+      "detail": "sample std=1.981"
+    },
+    {
+      "task": "noisy_bearing_conversion",
+      "description": "sampled bearing noise std matches configured bearing_noise_std (~0.0873 rad)",
+      "passed": true,
+      "detail": "sample std=0.0862 rad"
+    },
+    {
+      "task": "noisy_range_conversion",
+      "description": "noisy range is floored at 0.05 (never goes non-positive)",
+      "passed": true,
+      "detail": "min=3.0129"
+    },
+    {
+      "task": "detected_xy_reconstruction",
+      "description": "zero-noise reconstructed x/y matches true target position",
+      "passed": true,
+      "detail": "got (13.0000, -1.0000)"
+    },
+    {
+      "task": "detected_xy_reconstruction",
+      "description": "noisy x/y = uav_pos + measured_range*(cos,sin(measured_bearing))",
+      "passed": true,
+      "detail": "got (12.8741,-1.1378) vs expected (12.8741,-1.1378)"
+    },
+    {
+      "task": "covariance_dimensions",
+      "description": "measurement covariance is 3x3 (range, bearing, radial-velocity)",
+      "passed": true,
+      "detail": "shape=3x3"
+    },
+    {
+      "task": "covariance_dimensions",
+      "description": "measurement covariance is diagonal (no modeled cross-channel correlation)",
+      "passed": true,
+      "detail": "off-diagonals=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"
+    },
+    {
+      "task": "covariance_dimensions",
+      "description": "diagonal entries equal the reported per-channel variances",
+      "passed": true,
+      "detail": "diag=[0.0900112503515625, 0.001218621992616375, 0.010001250039062503]"
+    },
+    {
+      "task": "covariance_dimensions",
+      "description": "all variances are non-negative",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D decreases as range grows (low SNR -> harder to detect)",
+      "passed": true,
+      "detail": "pd_near=0.9500 pd_far=0.3455"
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D is lower in a storm than in clear weather at the same range",
+      "passed": true,
+      "detail": "pd_clear=0.9500 pd_storm=0.7124"
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D is lower for a critical-reliability radar than a nominal one",
+      "passed": true,
+      "detail": "pd_nominal=0.9500 pd_critical=0.5700"
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D stays within [0, 1] at range=0.5",
+      "passed": true,
+      "detail": "pd=0.9500"
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D stays within [0, 1] at range=10.0",
+      "passed": true,
+      "detail": "pd=0.9500"
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D stays within [0, 1] at range=100.0",
+      "passed": true,
+      "detail": "pd=0.9395"
+    },
+    {
+      "task": "pd_behavior",
+      "description": "P_D stays within [0, 1] at range=1000.0",
+      "passed": true,
+      "detail": "pd=0.2916"
+    },
+    {
+      "task": "pfa_behavior",
+      "description": "P_FA rises with clutter density (clutter_lambda)",
+      "passed": true,
+      "detail": "pfa_low=0.0525 pfa_high=0.1750"
+    },
+    {
+      "task": "pfa_behavior",
+      "description": "P_FA rises in a storm relative to clear weather",
+      "passed": true,
+      "detail": "pfa_clear=0.0625 pfa_storm=0.1350"
+    },
+    {
+      "task": "pfa_behavior",
+      "description": "P_FA stays within [0, 1] at clutter_lambda=0.0",
+      "passed": true,
+      "detail": "pfa=0.0500"
+    },
+    {
+      "task": "pfa_behavior",
+      "description": "P_FA stays within [0, 1] at clutter_lambda=1.0",
+      "passed": true,
+      "detail": "pfa=0.0750"
+    },
+    {
+      "task": "pfa_behavior",
+      "description": "P_FA stays within [0, 1] at clutter_lambda=10.0",
+      "passed": true,
+      "detail": "pfa=0.3000"
+    },
+    {
+      "task": "pfa_behavior",
+      "description": "P_FA stays within [0, 1] at clutter_lambda=100.0",
+      "passed": true,
+      "detail": "pfa=1.0000"
+    },
+    {
+      "task": "poisson_clutter_behavior",
+      "description": "Poisson(lambda=4.0) sample mean matches lambda",
+      "passed": true,
+      "detail": "sample_mean=3.986"
+    },
+    {
+      "task": "poisson_clutter_behavior",
+      "description": "Poisson(lambda=4.0) sample variance matches lambda (mean==variance)",
+      "passed": true,
+      "detail": "sample_var=4.014"
+    },
+    {
+      "task": "poisson_clutter_behavior",
+      "description": "Poisson(lambda=0) always returns 0",
+      "passed": true,
+      "detail": "got {0}"
+    },
+    {
+      "task": "poisson_clutter_behavior",
+      "description": "clutter_distribution='fixed' always generates round(clutter_lambda) candidates (PFA forced to 1.0)",
+      "passed": true,
+      "detail": "counts=[3]"
+    },
+    {
+      "task": "poisson_clutter_behavior",
+      "description": "clutter_distribution='poisson' produces a varying candidate count (not constant)",
+      "passed": true,
+      "detail": "distinct counts seen=12"
+    },
+    {
+      "task": "poisson_clutter_behavior",
+      "description": "clutter_distribution='poisson' mean confirmed count matches clutter_lambda",
+      "passed": true,
+      "detail": "mean=2.974"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "SNR equals reference_snr_db at reference_range (clear weather)",
+      "passed": true,
+      "detail": "got 30.0"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "doubling range drops SNR by ~12.04 dB (4th-power falloff)",
+      "passed": true,
+      "detail": "drop=12.0412 dB, expected 12.0412 dB"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "SNR decreases monotonically as range increases",
+      "passed": true,
+      "detail": "snrs=[60.0, 57.96, 30.0, 17.96, -10.0]"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "storm attenuation (6 dB) subtracts directly from SNR at the same range",
+      "passed": true,
+      "detail": "drop=6.0000 dB"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "SNR is floored at SNR_DB_MIN for extremely long range",
+      "passed": true,
+      "detail": "got -20.0"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "SNR is capped at SNR_DB_MAX for extremely short range",
+      "passed": true,
+      "detail": "got 60.0"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "SNR is None for non-positive/unknown range",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "measurement quality rises monotonically with SNR and stays in [0, 1]",
+      "passed": true,
+      "detail": "qualities=[0.0099, 0.2403, 0.5, 0.7597, 0.9901, 1.0]"
+    },
+    {
+      "task": "range_dependent_snr",
+      "description": "quality at SNR=0 dB is exactly 0.5 (SNR/(SNR+1) with linear SNR=1)",
+      "passed": true,
+      "detail": "got 0.5"
+    }
+  ]
+}
