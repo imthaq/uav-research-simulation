@@ -199,9 +199,9 @@ from collections import deque
 
 import numpy as np
 
-from model.radar_like_model import RadarLikeModel
+from models.radar_like_model import RadarLikeModel
 from tracking.radar_track_model import build_tracks
-import model.communication_model as communication_model
+import models.communication_model as communication_model
 
 NO_FUSION = "no_fusion"
 NAIVE_FUSION = "naive_fusion"

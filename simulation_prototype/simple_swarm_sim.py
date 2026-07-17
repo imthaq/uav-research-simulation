@@ -906,7 +906,7 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
     summary dict Simulation.run() returns.
     """
     from models.radar_like_model import RadarLikeModel, _range_bearing_radial
-    from model.radar_track_model import RadarTracker
+    from radar_track_model import RadarTracker
     from fusion_model import fuse_step, TrustTracker
 
     model = RadarLikeModel(config, scenario_name)

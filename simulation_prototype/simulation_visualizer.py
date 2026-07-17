@@ -1380,7 +1380,7 @@ def _run_full_stack(config: dict, scenario_name: str, architecture: str = "centr
     returns (SimulationData, RadarData, FusedTrackData, radar_model) ready
     to hand straight to SimulationVisualizer - no pre-existing CSV logs
     required. Used by generate_advanced_demo_videos below."""
-    from model.radar_like_model import RadarLikeModel
+    from models.radar_like_model import RadarLikeModel
     from tracking.radar_track_model import build_tracks
     from fusion_model import build_fused_log
 
