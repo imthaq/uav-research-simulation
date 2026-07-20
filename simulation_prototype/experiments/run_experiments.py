@@ -1,4 +1,3 @@
-
 """
 run_experiments.py
 
@@ -231,6 +230,7 @@ def run_and_save(config, scenario_name, run_number, seed, logs_dir, save_step_lo
     if save_step_log:
         out_path = os.path.join(logs_dir, f"{scenario_name}_run{run_number}.csv")
         if sim.log_rows:
+            os.makedirs(logs_dir, exist_ok=True)
             fieldnames = list(sim.log_rows[0].keys())
             with open(out_path, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)

@@ -1,0 +1,48 @@
+{
+  "started_at": "2026-07-20T08:31:59.974323+00:00",
+  "wall_clock_seconds": 1.175,
+  "config_path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\simulation_config.json",
+  "config_sha256_16": "d8b67e2d941e742f",
+  "num_trials": 3,
+  "recommended_trials": {
+    "initial_analysis_minimum": 20,
+    "paper_ready": "50-100"
+  },
+  "base_seed": 42,
+  "seed_mode": "sequential",
+  "scenario_names": [
+    "baseline",
+    "naive_fusion",
+    "high_dropout",
+    "communication_outage"
+  ],
+  "num_scenarios": 4,
+  "total_runs": 12,
+  "save_step_logs": true,
+  "seeds_by_scenario": {
+    "baseline": [
+      42,
+      43,
+      44
+    ],
+    "naive_fusion": [
+      42,
+      43,
+      44
+    ],
+    "high_dropout": [
+      42,
+      43,
+      44
+    ],
+    "communication_outage": [
+      42,
+      43,
+      44
+    ]
+  },
+  "environment": {
+    "python_version": "3.13.7",
+    "platform": "Windows-11-10.0.26100-SP0"
+  }
+}

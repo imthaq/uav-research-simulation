@@ -1,12 +1,12 @@
 {
-  "started_at": "2026-07-20T06:14:08.231693+00:00",
-  "overall_wall_clock_seconds": 52.77,
+  "started_at": "2026-07-20T08:04:36.267461+00:00",
+  "overall_wall_clock_seconds": 977.198,
   "overall_status": "PASS",
   "total_trials_run": 1270,
   "total_trials_failed": 0,
   "base_seed": 42,
   "seed_mode": "sequential",
-  "config_path": "/home/bot47/GitProjects/uav-research/simulation_prototype/simulation_config.json",
+  "config_path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\simulation_config.json",
   "config_sha256_16": "d8b67e2d941e742f",
   "core": {
     "scenarios": [
@@ -1089,9 +1089,9 @@
     "trials_actually_used": 50,
     "budget_estimate": {
       "warmup_trials_run": 21,
-      "warmup_elapsed_seconds": 0.681,
-      "per_trial_seconds_estimate": 0.03241,
-      "projected_seconds_at_target_trials": 11.34,
+      "warmup_elapsed_seconds": 1.721,
+      "per_trial_seconds_estimate": 0.08194,
+      "projected_seconds_at_target_trials": 28.68,
       "time_budget_seconds": 1800.0,
       "decision": "within budget -> using 50 trials"
     },
