@@ -1,0 +1,941 @@
+{
+  "world": {
+    "width": 100.0,
+    "height": 100.0,
+    "target": {
+      "x": 90.0,
+      "y": 90.0
+    },
+    "obstacle": {
+      "x": 50.0,
+      "y": 50.0,
+      "radius": 5.0
+    }
+  },
+  "swarm": {
+    "num_uavs": 4,
+    "start_positions": [
+      [
+        5.0,
+        5.0
+      ],
+      [
+        5.0,
+        15.0
+      ],
+      [
+        15.0,
+        5.0
+      ],
+      [
+        15.0,
+        15.0
+      ]
+    ],
+    "uav_speed": 2.0,
+    "desired_formation_spacing": 8.0,
+    "safety_distance": 2.0
+  },
+  "sim": {
+    "dt": 0.2,
+    "max_steps": 600,
+    "duration_seconds": 120.0,
+    "seed": 42,
+    "fusion_update_rate": 5.0
+  },
+  "sensing": {
+    "sensor_range": 15.0,
+    "collision_distance": 1.5,
+    "near_miss_distance": 3.5,
+    "goal_tolerance": 2.0
+  },
+  "control": {
+    "goal_gain": 1.0,
+    "avoidance_gain": 6.0,
+    "tangential_gain": 4.0
+  },
+  "perception_errors": {
+    "false_positive_rate": 0.0,
+    "false_negative_rate": 0.0,
+    "position_noise_std": 0.0,
+    "latency_steps": 0,
+    "dropout_prob": 0.0,
+    "dropout_duration_steps": 8,
+    "confidence_error_level": 0.0,
+    "fusion_mode": "no_fusion"
+  },
+  "radar": {
+    "radar_max_range": 15.0,
+    "radar_min_range": 0.0,
+    "radar_field_of_view": 360.0,
+    "radar_update_rate": 5.0,
+    "radar_detection_probability": 1.0,
+    "radar_false_alarm_probability": 0.0,
+    "radar_clutter_density": 0.0,
+    "radar_range_noise_std": 0.3,
+    "radar_radial_velocity_noise_std": 0.1,
+    "radar_latency_steps": 0,
+    "radar_dropout_probability": 0.0,
+    "radar_confidence_error": 0.0
+  },
+  "environment_modes": {
+    "clear": {
+      "vision": {
+        "false_negative_rate": 0.0,
+        "position_noise_std": 0.0,
+        "confidence_error_level": 0.0,
+        "dropout_prob": 0.0
+      },
+      "radar": {
+        "radar_detection_probability": 1.0,
+        "radar_range_noise_std": 0.2,
+        "radar_false_alarm_probability": 0.0,
+        "radar_clutter_density": 0.0,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "low_visibility": {
+      "vision": {
+        "false_negative_rate": 0.35,
+        "position_noise_std": 2.0,
+        "confidence_error_level": 0.2,
+        "dropout_prob": 0.01
+      },
+      "radar": {
+        "radar_detection_probability": 0.97,
+        "radar_range_noise_std": 0.3,
+        "radar_false_alarm_probability": 0.02,
+        "radar_clutter_density": 0.2,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "fog": {
+      "vision": {
+        "false_negative_rate": 0.55,
+        "position_noise_std": 3.5,
+        "confidence_error_level": 0.3,
+        "dropout_prob": 0.04
+      },
+      "radar": {
+        "radar_detection_probability": 0.93,
+        "radar_range_noise_std": 0.4,
+        "radar_false_alarm_probability": 0.03,
+        "radar_clutter_density": 0.3,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "heavy_clutter": {
+      "vision": {
+        "false_negative_rate": 0.1,
+        "position_noise_std": 0.5,
+        "confidence_error_level": 0.05,
+        "dropout_prob": 0.0
+      },
+      "radar": {
+        "radar_detection_probability": 0.9,
+        "radar_range_noise_std": 0.35,
+        "radar_false_alarm_probability": 0.35,
+        "radar_clutter_density": 3.0,
+        "radar_dropout_probability": 0.0,
+        "radar_latency_steps": 0
+      }
+    },
+    "communication_delay": {
+      "vision": {
+        "false_negative_rate": 0.0,
+        "position_noise_std": 0.0,
+        "confidence_error_level": 0.0,
+        "dropout_prob": 0.01,
+        "latency_steps": 6
+      },
+      "radar": {
+        "radar_detection_probability": 1.0,
+        "radar_range_noise_std": 0.2,
+        "radar_false_alarm_probability": 0.0,
+        "radar_clutter_density": 0.0,
+        "radar_dropout_probability": 0.01,
+        "radar_latency_steps": 6
+      }
+    },
+    "partial_sensor_failure": {
+      "failed_sensor": "radar",
+      "vision": {
+        "false_negative_rate": 0.0,
+        "position_noise_std": 0.0,
+        "confidence_error_level": 0.0,
+        "dropout_prob": 0.0
+      },
+      "radar": {
+        "radar_detection_probability": 0.05,
+        "radar_range_noise_std": 2.0,
+        "radar_false_alarm_probability": 0.0,
+        "radar_clutter_density": 0.0,
+        "radar_dropout_probability": 0.9,
+        "radar_dropout_duration_steps": 40,
+        "radar_latency_steps": 0
+      }
+    }
+  },
+  "scenarios": {
+    "baseline": {
+      "description": "No perception error, no fusion. Reference case every other scenario is compared against.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "fusion_mode": "no_fusion",
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0
+    },
+    "false_positive": {
+      "description": "Phantom (ghost) detections only.",
+      "false_positive_rate": 0.08,
+      "false_negative_rate": 0.0,
+      "fusion_mode": "no_fusion"
+    },
+    "false_negative": {
+      "description": "Missed detections only.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.25,
+      "fusion_mode": "no_fusion"
+    },
+    "sensor_noise": {
+      "description": "Gaussian position noise on real detections only.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 1.5,
+      "fusion_mode": "no_fusion"
+    },
+    "latency": {
+      "description": "Detections delayed before reaching the controller.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 5,
+      "fusion_mode": "no_fusion"
+    },
+    "sensor_dropout": {
+      "description": "Periodic total sensor blackouts.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "dropout_prob": 0.02,
+      "dropout_duration_steps": 8,
+      "fusion_mode": "no_fusion"
+    },
+    "confidence_error": {
+      "description": "Reported detection confidence is miscalibrated (noisy) relative to true detection quality, with no fusion to compensate.",
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "confidence_error_level": 0.35,
+      "fusion_mode": "no_fusion"
+    },
+    "no_fusion_matched": {
+      "description": "Same error conditions as naive_fusion/trust_weighted_fusion (FN=0.2, noise=1.5, confidence_error=0.15) but with fusion disabled. Exists so fusion mode is the only variable that changes across the three fusion-comparison scenarios; do not compare naive_fusion/trust_weighted_fusion against confidence_error or baseline for that purpose, since those use different error profiles.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "no_fusion"
+    },
+    "naive_fusion": {
+      "description": "Moderate noise + missed detections, combined across UAVs with unweighted (naive) averaging fusion.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "naive_fusion"
+    },
+    "trust_weighted_fusion": {
+      "description": "Same error conditions as naive_fusion, but fused using each UAV's confidence as a trust weight. (fixed/static trust weighting - trust_adaptation disabled, unchanged from pre-Task-15 behavior).",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "trust_adaptation": {
+        "enabled": false
+      }
+    },
+    "one_uav_obstacle": {
+      "description": "Task 7, scenario 1: a single static obstacle directly in the swarm's path - the baseline single-entity case every other multi-entity scenario below is a variation on.",
+      "fusion_mode": "no_fusion",
+      "entities": [
+        {
+          "id": "obstacle_0",
+          "kind": "static_obstacle",
+          "x": 50.0,
+          "y": 50.0,
+          "radius": 5.0
+        }
+      ]
+    },
+    "multiple_obstacles": {
+      "description": "Task 7, scenario 2: three static obstacles strung along the swarm's diagonal route to the rally point, forcing repeated avoidance rather than a single one-off dodge.",
+      "fusion_mode": "no_fusion",
+      "entities": [
+        {
+          "id": "obstacle_0",
+          "kind": "static_obstacle",
+          "x": 30.0,
+          "y": 30.0,
+          "radius": 4.0
+        },
+        {
+          "id": "obstacle_1",
+          "kind": "static_obstacle",
+          "x": 55.0,
+          "y": 50.0,
+          "radius": 5.0
+        },
+        {
+          "id": "obstacle_2",
+          "kind": "static_obstacle",
+          "x": 75.0,
+          "y": 68.0,
+          "radius": 4.0
+        }
+      ]
+    },
+    "two_crossing_targets": {
+      "description": "Task 7, scenario 3: two moving targets on paths that cross near the world center, patrolling back and forth (bounce) so the crossing recurs over the run instead of happening once.",
+      "fusion_mode": "no_fusion",
+      "entities": [
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 10.0,
+          "y": 90.0,
+          "velocity": [
+            0.9,
+            -0.9
+          ],
+          "bounce": true
+        },
+        {
+          "id": "target_1",
+          "kind": "moving_target",
+          "x": 10.0,
+          "y": 10.0,
+          "velocity": [
+            0.9,
+            0.9
+          ],
+          "bounce": true
+        }
+      ]
+    },
+    "moving_obstacle_approaching_swarm": {
+      "description": "Task 7, scenario 4: an obstacle starting well clear of the swarm's start cluster and moving steadily toward it, so the threat range/bearing genuinely closes over time instead of being static from step 0.",
+      "fusion_mode": "no_fusion",
+      "entities": [
+        {
+          "id": "obstacle_0",
+          "kind": "moving_obstacle",
+          "x": 95.0,
+          "y": 10.0,
+          "radius": 4.0,
+          "velocity": [
+            -1.0,
+            0.0
+          ],
+          "bounce": true
+        }
+      ]
+    },
+    "target_temporarily_lost": {
+      "description": "Task 7, scenario 5: a moving target that bounces back and forth vertically through x=50 (the middle of the swarm's diagonal route to the rally point), so it repeatedly sweeps into radar coverage as it crosses the corridor and back out of coverage as it moves toward y=0 or y=100 - genuinely leaving true sensor range for stretches of the run, not just suffering perception error.",
+      "fusion_mode": "no_fusion",
+      "entities": [
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 50.0,
+          "y": 5.0,
+          "velocity": [
+            0.0,
+            3.0
+          ],
+          "bounce": true
+        }
+      ]
+    },
+    "target_reappearing_after_dropout": {
+      "description": "Task 7, scenario 6: a target that stays continuously within radar coverage, paired with periodic total sensor dropout - so it disappears and reappears in the detection stream purely due to the sensor blacking out, not because it ever actually left range.",
+      "fusion_mode": "no_fusion",
+      "dropout_prob": 0.03,
+      "dropout_duration_steps": 12,
+      "entities": [
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 10.0,
+          "y": 50.0,
+          "velocity": [
+            0.5,
+            0.0
+          ],
+          "bounce": true
+        }
+      ]
+    },
+    "clutter_near_real_target": {
+      "description": "Task 7, scenario 7: a real target sitting in the swarm's path with elevated radar clutter/false-alarm rates, so genuine detections and clutter false alarms both show up in the same radar coverage area - a harder discrimination case than clutter in empty space.",
+      "fusion_mode": "no_fusion",
+      "radar_clutter_density": 2.0,
+      "radar_false_alarm_probability": 0.3,
+      "entities": [
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 50.0,
+          "y": 50.0,
+          "velocity": [
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    "closely_spaced_targets": {
+      "description": "Task 7, scenario 8: two targets close enough together (8 units apart, inside sensor_range but outside safe formation spacing) to stress whether detections/tracks stay resolved as two distinct entities instead of blurring into one.",
+      "fusion_mode": "no_fusion",
+      "entities": [
+        {
+          "id": "target_0",
+          "kind": "moving_target",
+          "x": 48.0,
+          "y": 48.0,
+          "velocity": [
+            0.4,
+            0.4
+          ],
+          "bounce": true
+        },
+        {
+          "id": "target_1",
+          "kind": "moving_target",
+          "x": 52.0,
+          "y": 52.0,
+          "velocity": [
+            0.4,
+            0.4
+          ],
+          "bounce": true
+        }
+      ]
+    },
+    "env_clear": {
+      "environment_mode": "clear",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "confidence_error_level": 0.0,
+      "dropout_prob": 0.0,
+      "radar_detection_probability": 1.0,
+      "radar_range_noise_std": 0.2,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_low_visibility": {
+      "environment_mode": "low_visibility",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "radar_detection_probability": 0.97,
+      "radar_range_noise_std": 0.3,
+      "radar_false_alarm_probability": 0.02,
+      "radar_clutter_density": 0.2,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_fog": {
+      "environment_mode": "fog",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.55,
+      "position_noise_std": 3.5,
+      "confidence_error_level": 0.3,
+      "dropout_prob": 0.04,
+      "radar_detection_probability": 0.93,
+      "radar_range_noise_std": 0.4,
+      "radar_false_alarm_probability": 0.03,
+      "radar_clutter_density": 0.3,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_heavy_clutter": {
+      "environment_mode": "heavy_clutter",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.1,
+      "position_noise_std": 0.5,
+      "confidence_error_level": 0.05,
+      "dropout_prob": 0.0,
+      "radar_detection_probability": 0.9,
+      "radar_range_noise_std": 0.35,
+      "radar_false_alarm_probability": 0.35,
+      "radar_clutter_density": 3.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0
+    },
+    "env_communication_delay": {
+      "environment_mode": "communication_delay",
+      "fusion_mode": "no_fusion",
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "confidence_error_level": 0.0,
+      "dropout_prob": 0.01,
+      "latency_steps": 6,
+      "radar_detection_probability": 1.0,
+      "radar_range_noise_std": 0.2,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.01,
+      "radar_latency_steps": 6
+    },
+    "env_partial_sensor_failure": {
+      "environment_mode": "partial_sensor_failure",
+      "fusion_mode": "no_fusion",
+      "failed_sensor": "radar",
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "confidence_error_level": 0.0,
+      "dropout_prob": 0.0,
+      "radar_detection_probability": 0.05,
+      "radar_range_noise_std": 2.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.9,
+      "radar_dropout_duration_steps": 40,
+      "radar_latency_steps": 0
+    },
+    "perfect_communication": {
+      "description": "Communication test: no packet loss, no delay, no range limit.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "perfect"
+      }
+    },
+    "low_packet_loss": {
+      "description": "Communication test: 5% packet loss, 2% corruption, 1-step hop delay.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "low_packet_loss"
+      }
+    },
+    "high_packet_loss": {
+      "description": "Communication test: 40% packet loss, 10% corruption, 1-step hop delay.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "high_packet_loss"
+      }
+    },
+    "short_communication_range": {
+      "description": "Communication test: 5-unit comm range - out-of-range UAV pairs can't share tracks.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "short_range"
+      }
+    },
+    "delayed_track_sharing": {
+      "description": "Communication test: 5-step hop delay, otherwise reliable.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "delayed_sharing"
+      }
+    },
+    "communication_outage": {
+      "description": "Communication test: complete temporary outage - every broadcast lost.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "outage"
+      }
+    },
+    "faulty_sensor_naive_fusion": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: UAV 0's radar is overconfident-but-wrong - reports the obstacle 5 world units off from its true position at 0.97 forced confidence, every other UAV senses at clean baseline accuracy. Fused with unweighted (naive) averaging, so the bad report just pulls the average toward itself, same weight as everyone else.",
+      "fusion_mode": "naive_fusion"
+    },
+    "faulty_sensor_confidence_weighted_fusion": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup as faulty_sensor_naive_fusion, fused by confidence-weighted averaging - the faulty sensor's forced-high confidence makes it actively dominate the fused estimate, worse than naive.",
+      "fusion_mode": "confidence_weighted_fusion"
+    },
+    "faulty_sensor_trust_weighted_fusion_fixed": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup, fused by trust-weighted averaging with trust_adaptation disabled (fixed trust) - reliability is derived from this step's confidence/status/covariance only, all of which the faulty sensor still self-reports as fine, so it isn't discounted.",
+      "fusion_mode": "trust_weighted_fusion",
+      "trust_adaptation": {
+        "enabled": false
+      }
+    },
+    "faulty_sensor_trust_weighted_fusion_dynamic": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup, fused by trust-weighted averaging with trust_adaptation enabled (dynamic trust) - TrustTracker watches this sensor's position disagree with the rest of the swarm step after step and lowers its persistent trust over the run, independent of its self-reported confidence.",
+      "fusion_mode": "trust_weighted_fusion",
+      "trust_adaptation": {
+        "enabled": true
+      }
+    },
+    "faulty_sensor_covariance_weighted_fusion": {
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "position_noise_std": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0,
+      "radar_max_range": 15.0,
+      "radar_min_range": 0.0,
+      "radar_field_of_view": 360.0,
+      "radar_update_rate": 5.0,
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_range_noise_std": 0.3,
+      "radar_bearing_noise_std": 0.0342,
+      "radar_radial_velocity_noise_std": 0.1,
+      "radar_latency_steps": 0,
+      "radar_dropout_probability": 0.0,
+      "radar_confidence_error": 0.0,
+      "faulty_uav_id": 0,
+      "faulty_position_bias": [
+        3.5,
+        0.0
+      ],
+      "faulty_confidence": 0.97,
+      "description": "Task 15: same overconfident faulty-sensor setup, fused by covariance-weighted (information) fusion - the faulty sensor's reported covariance is still physics-derived from true_range (unaffected by the position bias), so it looks just as tight/trustworthy as a working sensor and isn't discounted either.",
+      "fusion_mode": "covariance_weighted_fusion"
+    },
+    "very_low_P_D": {
+      "description": "Radar detection probability = 0.1 (misses 90% of targets)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 0.1,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "very_high_P_FA": {
+      "description": "Radar false alarm probability = 0.4 (40% clutter detections)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.4,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "high_clutter": {
+      "description": "Radar clutter density = 0.5 (heavy environmental interference)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.5,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "high_latency": {
+      "description": "Radar latency = 20 steps (~2s delay in fusion decision)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 20,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 20,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "high_dropout": {
+      "description": "Radar dropout probability = 0.7 (sensor intermittently dies)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.7,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.7,
+      "confidence_error_level": 0.0
+    },
+    "simultaneous_sensor_failures": {
+      "description": "All failures combined: low P_D + high P_FA + clutter + dropout + latency",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 0.15,
+      "radar_false_alarm_probability": 0.35,
+      "radar_clutter_density": 0.4,
+      "radar_dropout_probability": 0.6,
+      "radar_latency_steps": 15,
+      "position_noise_std": 1.5,
+      "false_positive_rate": 0.15,
+      "false_negative_rate": 0.3,
+      "latency_steps": 15,
+      "dropout_prob": 0.6,
+      "confidence_error_level": 0.4
+    },
+    "target_crossing": {
+      "description": "High velocity noise: simulates crossing targets with uncertain trajectories",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "radar_radial_velocity_noise_std": 0.5,
+      "position_noise_std": 0.8,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "sudden_target_appearance": {
+      "description": "High false positive rate: sudden, unexpected detections (clutter-like)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.5,
+      "radar_clutter_density": 0.3,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.5,
+      "false_positive_rate": 0.25,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.15
+    },
+    "rapidly_moving_obstacle": {
+      "description": "High velocity + bearing noise: fast-moving threats with poor angular resolution",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.1,
+      "radar_latency_steps": 5,
+      "radar_bearing_noise_std": 0.15,
+      "radar_radial_velocity_noise_std": 0.4,
+      "position_noise_std": 0.6,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.05,
+      "latency_steps": 5,
+      "dropout_prob": 0.1,
+      "confidence_error_level": 0.0
+    },
+    "overconfident_faulty_sensor": {
+      "description": "High confidence + high actual error (liar sensor): miscalibrated confidence",
+      "fusion_mode": "confidence_weighted_fusion",
+      "radar_detection_probability": 0.9,
+      "radar_false_alarm_probability": 0.15,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.05,
+      "radar_latency_steps": 3,
+      "radar_confidence_error": 0.6,
+      "position_noise_std": 1.2,
+      "false_positive_rate": 0.1,
+      "false_negative_rate": 0.15,
+      "latency_steps": 3,
+      "dropout_prob": 0.05,
+      "confidence_error_level": 0.6
+    },
+    "wrong_trust_assignment": {
+      "description": "High confidence + high actual error mismatch: trust score out of sync with reality",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 0.95,
+      "radar_false_alarm_probability": 0.05,
+      "radar_clutter_density": 0.05,
+      "radar_dropout_probability": 0.1,
+      "radar_latency_steps": 5,
+      "radar_confidence_error": 0.5,
+      "position_noise_std": 1.0,
+      "false_positive_rate": 0.08,
+      "false_negative_rate": 0.12,
+      "latency_steps": 5,
+      "dropout_prob": 0.1,
+      "confidence_error_level": 0.5
+    }
+  },
+  "vision": {
+    "vision_update_rate": 5.0
+  },
+  "lidar": {
+    "lidar_update_rate": 1.67
+  },
+  "communication": {
+    "preset": "perfect",
+    "packet_loss_probability": 0.0,
+    "comm_range": null,
+    "base_latency_steps": 0,
+    "max_staleness_steps": null,
+    "corruption_probability": 0.0,
+    "central_uplink_latency_steps": 1,
+    "central_downlink_latency_steps": 1
+  },
+  "reproducibility": {
+    "_description": "single place documenting/controlling everything needed to reproduce a run. UAV count/target count/obstacle count/sensor/radar/fusion/communication parameters already live above (swarm.num_uavs, scenarios[*].entities, sensing, radar, scenarios[*].fusion_mode, communication) and per-scenario name + random seed are resolved at run time by run_experiments.py (scenario_names, sim.seed / --base-seed) - not duplicated here to avoid two sources of truth. This block adds the two pieces that weren't config-driven before (trial_count, output_location) plus a record of the tracker's lifecycle/gating constants.",
+    "trial_count": 20,
+    "output_location": "results",
+    "tracker_parameters": {
+      "_source": "mirrors the module-level constants in radar_track_model.py (RadarTracker/RadarTrack); recorded here for reproducibility, not yet read from config",
+      "confirm_hits": 3,
+      "max_missed": 3,
+      "gate_chi2": 9.21,
+      "exist_prob_init": 0.65,
+      "exist_prob_hit_gain": 0.15,
+      "exist_prob_miss_decay": 0.3,
+      "exist_prob_delete_floor": 0.1,
+      "process_accel_std": 1.0,
+      "init_velocity_var": 25.0
+    }
+  }
+}
