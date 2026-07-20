@@ -23,6 +23,17 @@ pipeline directly instead. Saved into plots/advanced/:
   centralized vs distributed fusion, static vs dynamic trust, tracking
   performance by scenario, confidence intervals for major results.
 
+Final set - the 13 plots required for the final deliverable, a curated
+subset of the advanced set (2 of them, P_D vs missed response and P_D vs
+collision risk, are new) saved into plots/final/:
+
+  P_D vs missed response, P_D vs collision risk, P_FA vs false-track
+  count, clutter vs fusion RMSE, range vs radar position error, latency
+  vs response time, packet loss vs mission success, fusion mode vs
+  {position RMSE, collision risk, mission success}, centralized vs
+  distributed fusion, fixed vs dynamic trust, confidence intervals for
+  main comparisons.
+
 Run from the simulation_prototype/ folder:
     python generate_plots.py
 Optional flags:
@@ -30,8 +41,11 @@ Optional flags:
     --outdir  plots                         (basic-set output folder)
     --config  simulation_config.json        (advanced-set input config)
     --advanced-outdir plots/advanced        (advanced-set output folder)
-    --seeds   4                             (seeds per advanced data point)
-    --skip-advanced                         (basic set only)
+    --final-outdir plots/final              (final-set output folder)
+    --seeds   4                             (seeds per advanced/final data point)
+    --skip-advanced                         (skip the exploratory advanced set)
+    --skip-final                            (skip the curated final set)
+    --final-only                            (only the curated final set)
 """
 
 import argparse
@@ -48,7 +62,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from simple_swarm_sim import Simulation, run_radar_track_fusion_pipeline
-from fusion_model import (
+from fusion.fusion_model import (
     build_fused_log, estimation_error_against_ground_truth,
     ARCHITECTURE_CENTRALIZED, ARCHITECTURE_DISTRIBUTED, FUSION_MODES,
 )
@@ -346,6 +360,23 @@ def plot_pd_vs_continuity(config, outdir, seeds):
     means, cis = sweep_metric(config, "baseline", overrides, seeds, "track_continuity")
     line_ci_plot(values, means, cis, "Detection probability (P_D)", "Track continuity",
                  "P_D vs Track Continuity", os.path.join(outdir, "pd_vs_track_continuity.png"))
+
+
+def plot_pd_vs_missed_response(config, outdir, seeds):
+    values = [0.1, 0.3, 0.5, 0.7, 1.0]
+    overrides = [{"radar_detection_probability": v} for v in values]
+    means, cis = sweep_metric(config, "baseline", overrides, seeds, "missed_response_count")
+    line_ci_plot(values, means, cis, "Detection probability (P_D)", "Missed response count",
+                 "P_D vs Missed Response", os.path.join(outdir, "pd_vs_missed_response.png"),
+                 color=ADV_ACCENT)
+
+
+def plot_pd_vs_collision_risk(config, outdir, seeds):
+    values = [0.1, 0.3, 0.5, 0.7, 1.0]
+    overrides = [{"radar_detection_probability": v} for v in values]
+    means, cis = sweep_metric(config, "baseline", overrides, seeds, "collision_risk_count")
+    line_ci_plot(values, means, cis, "Detection probability (P_D)", "Collision risk count",
+                 "P_D vs Collision Risk", os.path.join(outdir, "pd_vs_collision_risk.png"))
 
 
 def plot_pfa_vs_false_track(config, outdir, seeds):
@@ -688,15 +719,67 @@ def generate_advanced_plots(config_path, outdir, seeds):
     print(f"Saved advanced graphs to {outdir}/")
 
 
+# --- final set: curated 1:1 with the required final-deliverable plot list ---
+#
+#   1. P_D vs missed response          7. packet loss vs mission success
+#   2. P_D vs collision risk           8. fusion mode vs position RMSE
+#   3. P_FA vs false-track count       9. fusion mode vs collision risk
+#   4. clutter vs fusion RMSE         10. fusion mode vs mission success
+#   5. range vs radar position error  11. centralized vs distributed fusion
+#   6. latency vs response time       12. fixed trust vs dynamic trust
+#                                     13. confidence intervals (main comparisons)
+FINAL_PLOTS = [
+    plot_pd_vs_missed_response,
+    plot_pd_vs_collision_risk,
+    plot_pfa_vs_false_track,
+    plot_clutter_vs_fusion_error,
+    plot_range_vs_rmse,
+    plot_latency_vs_response,
+    plot_packet_loss_vs_mission_success,
+    plot_fusion_mode_vs_rmse,
+    plot_fusion_mode_vs_collision_risk,
+    plot_fusion_mode_vs_mission_success,
+    plot_architecture_comparison,
+    plot_static_vs_dynamic_trust,
+    plot_confidence_intervals,
+]
+
+
+def generate_final_plots(config_path, outdir, seeds):
+    os.makedirs(outdir, exist_ok=True)
+    with open(config_path) as f:
+        config = json.load(f)
+
+    print(f"\nGenerating {len(FINAL_PLOTS)} final plots...")
+    for i, plot_fn in enumerate(FINAL_PLOTS, 1):
+        try:
+            print(f"  [{i}/{len(FINAL_PLOTS)}] {plot_fn.__name__}...")
+            plot_fn(config, outdir, seeds)
+        except Exception as e:
+            print(f"    Warning: {plot_fn.__name__} failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print(f"Saved final graphs to {outdir}/")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate graphs from results_summary.csv")
     parser.add_argument("--summary", default="results/results_summary.csv")
     parser.add_argument("--outdir", default="plots")
     parser.add_argument("--config", default="simulation_config.json", help="Advanced-set input config")
     parser.add_argument("--advanced-outdir", default="plots/advanced")
-    parser.add_argument("--seeds", type=int, default=4, help="Seeds per advanced-set data point")
-    parser.add_argument("--skip-advanced", action="store_true", help="Only generate the basic six graphs")
+    parser.add_argument("--final-outdir", default="plots/final", help="Curated final-deliverable set output folder")
+    parser.add_argument("--seeds", type=int, default=4, help="Seeds per advanced/final-set data point")
+    parser.add_argument("--skip-advanced", action="store_true", help="Skip the full advanced/exploratory set")
+    parser.add_argument("--skip-final", action="store_true", help="Skip the curated final-deliverable set")
+    parser.add_argument("--final-only", action="store_true",
+                         help="Only generate the curated final set (skip basic + advanced)")
     args = parser.parse_args()
+
+    if args.final_only:
+        generate_final_plots(args.config, args.final_outdir, args.seeds)
+        return
 
     # Basic plots
     os.makedirs(args.outdir, exist_ok=True)
@@ -766,6 +849,9 @@ def main():
 
     if not args.skip_advanced:
         generate_advanced_plots(args.config, args.advanced_outdir, args.seeds)
+
+    if not args.skip_final:
+        generate_final_plots(args.config, args.final_outdir, args.seeds)
 
 
 if __name__ == "__main__":
