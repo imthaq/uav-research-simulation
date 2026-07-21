@@ -234,6 +234,19 @@ class RadarLikeModel:
     DEFAULT_DROPOUT_PROBABILITY = 0.0
     DEFAULT_CONFIDENCE_ERROR = 0.0
 
+    # Confidence-miscalibration scenarios: radar_confidence_error (above)
+    # is zero-mean Gaussian noise on reported confidence - it scatters
+    # confidence around the true value but doesn't systematically shift it
+    # one way. A biased/miscalibrated sensor (chronically over- or
+    # under-confident) needs a directional term on top of that noise.
+    # radar_confidence_bias shifts every real-detection confidence;
+    # radar_clutter_confidence_bias shifts clutter/false-alarm confidence
+    # separately (defaults to mirroring radar_confidence_bias if unset, so
+    # a single knob biases everything unless clutter needs to be
+    # controlled independently, e.g. "high-confidence false alarms" with
+    # otherwise-calibrated real detections).
+    DEFAULT_CONFIDENCE_BIAS = 0.0
+
     # Task 2: probabilistic measurement uncertainty. Simplified
     # radar-equation-style SNR proxy: SNR(range) falls off by
     # radar_snr_exponent * 10*log10(range/reference_range) dB relative to
@@ -359,6 +372,11 @@ class RadarLikeModel:
             radar_cfg.get("radar_dropout_probability", self.DEFAULT_DROPOUT_PROBABILITY))
         self.radar_confidence_error = scn.get(
             "radar_confidence_error", radar_cfg.get("radar_confidence_error", self.DEFAULT_CONFIDENCE_ERROR))
+        self.radar_confidence_bias = scn.get(
+            "radar_confidence_bias", radar_cfg.get("radar_confidence_bias", self.DEFAULT_CONFIDENCE_BIAS))
+        self.radar_clutter_confidence_bias = scn.get(
+            "radar_clutter_confidence_bias",
+            radar_cfg.get("radar_clutter_confidence_bias", self.radar_confidence_bias))
 
         # Task 15: single-sensor fault injection. One specific UAV's radar
         # (faulty_uav_id) reports a systematic position bias while its
@@ -595,17 +613,28 @@ class RadarLikeModel:
             if self.faulty_confidence is not None:
                 d["confidence"] = self.faulty_confidence
 
-    def _apply_confidence_error(self, perceived):
-        """Extra Gaussian confidence miscalibration applied at the
-        radar-reporting stage, on top of whatever Perception already
-        applied - the radar's own self-assessment of detection quality is
-        itself imperfect."""
-        if self.radar_confidence_error <= 0:
+    def _apply_confidence_error(self, perceived, bias=None):
+        """Confidence miscalibration applied at the radar-reporting stage,
+        on top of whatever Perception already applied - the radar's own
+        self-assessment of detection quality is itself imperfect. Two
+        independent terms, applied together:
+          - radar_confidence_error: zero-mean Gaussian noise (scatter,
+            doesn't systematically shift confidence one way).
+          - bias (radar_confidence_bias / radar_clutter_confidence_bias):
+            a fixed directional shift, positive = overconfident
+            (reports higher than warranted), negative = underconfident.
+        `bias` defaults to self.radar_confidence_bias (real detections);
+        _generate_clutter passes self.radar_clutter_confidence_bias
+        explicitly so clutter can be biased independently."""
+        bias = self.radar_confidence_bias if bias is None else bias
+        if self.radar_confidence_error <= 0 and bias == 0.0:
             return
         for d in perceived:
             if d.get("confidence") is not None:
+                noise = (self.radar_rng.gauss(0.0, self.radar_confidence_error)
+                          if self.radar_confidence_error > 0 else 0.0)
                 d["confidence"] = round(clamp(
-                    d["confidence"] + self.radar_rng.gauss(0.0, self.radar_confidence_error),
+                    d["confidence"] + bias + noise,
                     0.0, 1.0), 3)
 
     # ------------------------------------------------------------------
@@ -688,7 +717,9 @@ class RadarLikeModel:
 
             x = uav_pos[0] + rng_ * math.cos(bearing)
             y = uav_pos[1] + rng_ * math.sin(bearing)
-            confidence = round(clamp(self.radar_rng.uniform(0.2, 0.7), 0.0, 1.0), 3)
+            confidence = round(clamp(
+                self.radar_rng.uniform(0.2, 0.7) + self.radar_clutter_confidence_bias,
+                0.0, 1.0), 3)
 
             self._clutter_counter += 1
             dets.append({
