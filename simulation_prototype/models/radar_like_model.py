@@ -348,6 +348,77 @@ class RadarLikeModel:
         "critical": {"noise_mult": 2.5, "pd_mult": 0.6, "pfa_mult": 1.8},
     }
 
+    # Task 11: radar operating modes. A third axis, independent of (and
+    # stacking multiplicatively with) environmental_condition and
+    # reliability_state above - those model "weather" and "hardware
+    # health"; this models "what mode the operator/scheduler currently
+    # has the radar running in", which can change mid-mission (see
+    # set_radar_mode / radar_mode_schedule). Each mode scales the radar's
+    # *base* config values (radar_max_range, radar_update_rate,
+    # radar_latency_steps, the three noise stds, radar_detection_
+    # probability, radar_false_alarm_probability) rather than replacing
+    # them, same pattern as ENV_FACTORS/RELIABILITY_FACTORS.
+    #
+    # relative_processing_cost is a unitless proxy (normal=1.0), not a
+    # physical energy/compute model - no such model exists elsewhere in
+    # this simulator to hook into.
+    # ponytail: relative_processing_cost is a hand-picked relative
+    # number, not derived from any power/compute simulation. Upgrade
+    # path: replace with a real per-mode duty-cycle/FLOPs model if energy
+    # budgeting ever needs to be simulated rather than just reported.
+    DEFAULT_RADAR_MODE = "normal"
+    RADAR_MODES = {
+        "normal": {
+            "update_rate_mult": 1.0, "pd_mult": 1.0, "pfa_mult": 1.0,
+            "range_noise_mult": 1.0, "bearing_noise_mult": 1.0, "doppler_noise_mult": 1.0,
+            "max_range_mult": 1.0, "snr_offset_db": 0.0, "latency_add_steps": 0,
+            "relative_processing_cost": 1.0,
+        },
+        # Longer dwell/more transmit power to reach further, at the cost
+        # of revisit rate, angular/range resolution, and latency.
+        "long_range": {
+            "update_rate_mult": 0.5, "pd_mult": 1.0, "pfa_mult": 1.05,
+            "range_noise_mult": 1.3, "bearing_noise_mult": 1.3, "doppler_noise_mult": 1.1,
+            "max_range_mult": 1.8, "snr_offset_db": 3.0, "latency_add_steps": 1,
+            "relative_processing_cost": 1.4,
+        },
+        # More processing gain/integration for precision, at the cost of
+        # coverage range and revisit rate.
+        "high_resolution": {
+            "update_rate_mult": 0.7, "pd_mult": 1.0, "pfa_mult": 0.7,
+            "range_noise_mult": 0.5, "bearing_noise_mult": 0.4, "doppler_noise_mult": 0.6,
+            "max_range_mult": 0.6, "snr_offset_db": 2.0, "latency_add_steps": 1,
+            "relative_processing_cost": 1.8,
+        },
+        # Deliberately reduced-power/reduced-capability operating state
+        # (an operator or power-budget choice - distinct from
+        # RELIABILITY_FACTORS's "degraded", which models unplanned
+        # hardware wear/faults; the two stack if both apply at once).
+        "degraded": {
+            "update_rate_mult": 0.6, "pd_mult": 0.8, "pfa_mult": 1.3,
+            "range_noise_mult": 1.6, "bearing_noise_mult": 1.6, "doppler_noise_mult": 1.6,
+            "max_range_mult": 0.7, "snr_offset_db": -4.0, "latency_add_steps": 1,
+            "relative_processing_cost": 0.6,
+        },
+        # External RF interference/jamming: mostly corrupts confirmability
+        # (many spurious returns) and the Doppler/phase channel, plus
+        # extra filtering effort to cope.
+        "interference": {
+            "update_rate_mult": 1.0, "pd_mult": 0.85, "pfa_mult": 2.5,
+            "range_noise_mult": 1.4, "bearing_noise_mult": 1.3, "doppler_noise_mult": 2.0,
+            "max_range_mult": 0.85, "snr_offset_db": -6.0, "latency_add_steps": 0,
+            "relative_processing_cost": 1.3,
+        },
+        # Significant hardware failure, radar still limping along at
+        # greatly reduced capability rather than a full dropout.
+        "partial_failure": {
+            "update_rate_mult": 0.4, "pd_mult": 0.35, "pfa_mult": 1.6,
+            "range_noise_mult": 2.2, "bearing_noise_mult": 2.2, "doppler_noise_mult": 2.2,
+            "max_range_mult": 0.4, "snr_offset_db": -10.0, "latency_add_steps": 3,
+            "relative_processing_cost": 0.3,
+        },
+    }
+
     def __init__(self, config, scenario_name):
         self.cfg = config
         self.scenario_name = scenario_name
@@ -476,6 +547,33 @@ class RadarLikeModel:
         self._env_factors = self.ENV_FACTORS[self.environmental_condition]
         self._reliability_factors = self.RELIABILITY_FACTORS[self.radar_reliability_state]
 
+        # Task 11: radar operating modes. Base values captured here are
+        # what mode factors scale from; _apply_radar_mode (re-invoked by
+        # set_radar_mode) recomputes the effective radar_max_range/
+        # radar_update_rate/radar_update_interval_steps/radar_latency_steps
+        # attributes every time the mode changes, and every consumer of
+        # those attributes (the FOV/PD gate, the update-rate check, the
+        # latency buffer) reads them live off self, so a mode switch takes
+        # effect on the very next scan with no re-patching needed.
+        self._base_radar_max_range = self.radar_max_range
+        self._base_radar_update_rate = self.radar_update_rate
+        self._base_radar_latency_steps = self.radar_latency_steps
+
+        radar_mode = scn.get("radar_mode", radar_cfg.get("radar_mode", self.DEFAULT_RADAR_MODE))
+        if radar_mode not in self.RADAR_MODES:
+            raise ValueError(f"Unknown radar_mode: {radar_mode!r}")
+        self.radar_mode = radar_mode
+        self._apply_radar_mode()
+
+        # Optional declarative schedule of mode changes during the run:
+        # [{"time_step": t, "mode": name}, ...]. Checked once per step in
+        # the wrapped Simulation.step (_patch_step) so a scenario can
+        # script mode transitions without any external driver code;
+        # set_radar_mode remains available for driving transitions
+        # programmatically instead/as well.
+        schedule = scn.get("radar_mode_schedule", radar_cfg.get("radar_mode_schedule", []))
+        self._radar_mode_schedule = sorted(schedule, key=lambda e: e["time_step"])
+
         # Task 8: extended-target radar returns. Scenario override ->
         # top-level "radar" config section -> built-in default, same
         # pattern as every other radar_* key above.
@@ -530,6 +628,40 @@ class RadarLikeModel:
         self._patch_step()
 
     # ------------------------------------------------------------------
+    # Task 11: radar operating modes
+    # ------------------------------------------------------------------
+    def _apply_radar_mode(self):
+        """Recomputes every mode-dependent effective value from the
+        stored base values and the currently-selected mode's factors.
+        Called from __init__ and from set_radar_mode."""
+        mode = self.RADAR_MODES[self.radar_mode]
+        self._mode_factors = mode
+
+        self.radar_max_range = self._base_radar_max_range * mode["max_range_mult"]
+
+        effective_rate = self._base_radar_update_rate * mode["update_rate_mult"]
+        self.radar_update_rate = effective_rate
+        self.radar_update_interval_steps = (
+            max(1, round(1.0 / (effective_rate * self.dt)))
+            if effective_rate > 0 else 1)
+
+        self.radar_latency_steps = self._base_radar_latency_steps + mode["latency_add_steps"]
+
+    def set_radar_mode(self, mode_name):
+        """Switches radar operating mode mid-run (Task 11: "allow mode
+        transitions during a simulation run"). Safe to call between
+        Simulation.step() calls - e.g. from a driver script sequencing
+        `model.sim.step(t); model.set_radar_mode(...)` - or let
+        radar_mode_schedule drive it automatically. The next scan (and
+        every gating/noise/PD/PFA/SNR calculation after it) picks up the
+        new mode's factors immediately, since they're all read live off
+        self rather than baked in at __init__."""
+        if mode_name not in self.RADAR_MODES:
+            raise ValueError(f"Unknown radar_mode: {mode_name!r}")
+        self.radar_mode = mode_name
+        self._apply_radar_mode()
+
+    # ------------------------------------------------------------------
     # Task 2: probabilistic measurement uncertainty
     # ------------------------------------------------------------------
     def _snr_db_for_range(self, rng_):
@@ -542,7 +674,8 @@ class RadarLikeModel:
             return None
         raw_snr = (self.reference_snr_db
                    - self.snr_exponent * 10.0 * math.log10(max(rng_, 1e-6) / self.reference_range)
-                   - self._env_factors["attenuation_db"])
+                   - self._env_factors["attenuation_db"]
+                   + self._mode_factors["snr_offset_db"])
         return clamp(raw_snr, self.SNR_DB_MIN, self.SNR_DB_MAX)
 
     def _quality_from_snr(self, snr_db):
@@ -576,12 +709,17 @@ class RadarLikeModel:
 
         env = self._env_factors
         rel = self._reliability_factors
+        mode = self._mode_factors
 
         noise_scale = (env["noise_mult"] * rel["noise_mult"]) / max(quality, 0.05)
 
-        range_variance = (self.range_noise_std * noise_scale) ** 2
-        bearing_variance = (self.bearing_noise_std * noise_scale) ** 2
-        radial_velocity_variance = (self.radial_velocity_noise_std * noise_scale) ** 2
+        # Task 11: mode noise multipliers are per-channel (range/bearing/
+        # Doppler each degrade differently by mode, e.g. "interference"
+        # hits Doppler hardest) rather than folded into the shared
+        # noise_scale above.
+        range_variance = (self.range_noise_std * noise_scale * mode["range_noise_mult"]) ** 2
+        bearing_variance = (self.bearing_noise_std * noise_scale * mode["bearing_noise_mult"]) ** 2
+        radial_velocity_variance = (self.radial_velocity_noise_std * noise_scale * mode["doppler_noise_mult"]) ** 2
 
         # Diagonal covariance over (range, bearing, radial_velocity) - no
         # cross-channel correlation is modeled anywhere else in this
@@ -603,7 +741,7 @@ class RadarLikeModel:
         # cliff at 0 dB.
         pd_quality_factor = 0.3 + 0.7 * quality
         pd_effective = clamp(
-            self.detection_probability * env["pd_mult"] * rel["pd_mult"] * pd_quality_factor,
+            self.detection_probability * env["pd_mult"] * rel["pd_mult"] * mode["pd_mult"] * pd_quality_factor,
             0.0, 1.0)
 
         # PFA: base radar_false_alarm_probability, raised by environment/
@@ -612,7 +750,7 @@ class RadarLikeModel:
         # candidate, on top of clutter_lambda producing more candidates).
         clutter_factor = 1.0 + (self.clutter_lambda * env["clutter_mult"]) / 2.0
         pfa_effective = clamp(
-            self.false_alarm_probability * env["pfa_mult"] * rel["pfa_mult"] * clutter_factor,
+            self.false_alarm_probability * env["pfa_mult"] * rel["pfa_mult"] * mode["pfa_mult"] * clutter_factor,
             0.0, 1.0)
 
         return {
@@ -1186,6 +1324,11 @@ class RadarLikeModel:
         def wrapped_step(t, _orig=original_step):
             self._capture = {}
             self._current_t = t
+            # Task 11: apply any scheduled mode transitions due by this
+            # step, in order, before this step's scans are generated.
+            while self._radar_mode_schedule and self._radar_mode_schedule[0]["time_step"] <= t:
+                entry = self._radar_mode_schedule.pop(0)
+                self.set_radar_mode(entry["mode"])
             pos_before = {i: tuple(self.sim.pos[i]) for i in range(self.sim.num_uavs)}
             _orig(t)
             pos_after = {i: tuple(self.sim.pos[i]) for i in range(self.sim.num_uavs)}
@@ -1349,6 +1492,9 @@ class RadarLikeModel:
             "probability_of_false_alarm": probability_of_false_alarm,
             "radar_environmental_condition": self.environmental_condition,
             "radar_reliability_state": self.radar_reliability_state,
+            # Task 11: radar operating modes.
+            "radar_operating_mode": self.radar_mode,
+            "radar_relative_processing_cost": self._mode_factors["relative_processing_cost"],
             # Task 8: extended-target radar returns. return_strength
             # defaults to full strength (1.0) for a normal single/dominant
             # return; extras carry their own sampled fraction. is_extended
