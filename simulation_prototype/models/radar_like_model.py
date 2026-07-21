@@ -194,6 +194,32 @@ def _range_bearing_radial(observer_pos, observer_vel, target_pos, target_vel):
     return rng, bearing, radial_vel
 
 
+def _apply_doppler_aliasing(radial_velocity, max_unambiguous_rv):
+    """Applies Doppler velocity aliasing when the true radial velocity exceeds
+    the maximum unambiguous radial velocity. Returns (aliased_velocity, is_ambiguous).
+    
+    When true radial velocity magnitude exceeds max_unambiguous_rv, the measured
+    velocity wraps into the [-max_unambiguous_rv, +max_unambiguous_rv] range via
+    modulo arithmetic, simulating radar PRF ambiguity. is_ambiguous is True when
+    actual wrapping occurred.
+    """
+    if radial_velocity is None or max_unambiguous_rv <= 0:
+        return radial_velocity, False
+    
+    # Check if aliasing is needed
+    if abs(radial_velocity) <= max_unambiguous_rv:
+        return radial_velocity, False
+    
+    # Apply wrapping: fold the velocity into [-max, +max] range
+    # This simulates the periodic ambiguity of pulse-Doppler radar
+    unambiguous_range = 2.0 * max_unambiguous_rv
+    # Shift to positive, apply modulo, shift back
+    shifted = radial_velocity + max_unambiguous_rv
+    wrapped = (shifted % unambiguous_range) - max_unambiguous_rv
+    
+    return wrapped, True
+
+
 def _wrap_angle(angle):
     """Wraps an angle (radians) into (-pi, pi]."""
     return (angle + math.pi) % (2 * math.pi) - math.pi
@@ -271,6 +297,14 @@ class RadarLikeModel:
     DEFAULT_RETURN_SPREAD_STD = 0.3           # meters, 1-sigma position spread of extra returns around the target
     DEFAULT_RETURN_STRENGTH_VARIATION = 0.3   # fractional strength/confidence drop range for extra returns, [0, 1]
     DEFAULT_MAXIMUM_RETURNS_PER_TARGET = 4    # hard cap on returns per target per scan, dominant included
+
+    # Task 9: Doppler ambiguity. Simplified unambiguous radial-velocity limit model.
+    # When true radial velocity exceeds max_unambiguous_radial_velocity, the measured
+    # radial velocity is wrapped/aliased to the [-max, +max] range and doppler_ambiguity_flag
+    # is set. If doppler_aliasing_enabled is False, no aliasing occurs (behaves as if
+    # the limit is infinite).
+    DEFAULT_MAX_UNAMBIGUOUS_RV = 100.0        # units/sec, effectively no limit by default
+    DEFAULT_DOPPLER_ALIASING_ENABLED = False  # disabled by default
 
     # Environmental condition -> degradation multipliers. attenuation_db
     # subtracts directly from SNR; noise_mult scales every reported
@@ -447,6 +481,15 @@ class RadarLikeModel:
         self._extended_return_counter = 0  # monotonically increasing id suffix for generated extra returns
 
         self._clutter_counter = 0  # monotonically increasing id suffix for generated clutter points
+
+        # Task 9: Doppler ambiguity. Scenario override -> top-level "radar"
+        # config section -> built-in default, same pattern as every other radar_* key.
+        self.max_unambiguous_radial_velocity = scn.get(
+            "max_unambiguous_radial_velocity",
+            radar_cfg.get("max_unambiguous_radial_velocity", self.DEFAULT_MAX_UNAMBIGUOUS_RV))
+        self.doppler_aliasing_enabled = scn.get(
+            "doppler_aliasing_enabled",
+            radar_cfg.get("doppler_aliasing_enabled", self.DEFAULT_DOPPLER_ALIASING_ENABLED))
 
         self._capture = {}  # uav_id -> captured true/final-perceived data for the current step
         self.rows = []
@@ -1052,6 +1095,7 @@ class RadarLikeModel:
 
         detected_x = detected_y = None
         measured_range = measured_bearing = measured_radial_vel = None
+        doppler_ambiguity_flag = False
         confidence = None
 
         # Task 2: the uncertainty representation. If this measurement
@@ -1086,6 +1130,7 @@ class RadarLikeModel:
             # with range/SNR/environment/reliability the same as range and
             # bearing do). No coherent Doppler for phantoms (no real
             # target underneath).
+            # Task 9: Apply Doppler aliasing if enabled and velocity exceeds limit.
             if (target_id is not None
                     and not target_id.startswith("phantom_")
                     and not target_id.startswith("clutter_")):
@@ -1095,6 +1140,11 @@ class RadarLikeModel:
                     rv_std = (math.sqrt(uncertainty["radial_velocity_variance"])
                               if uncertainty is not None else self.radial_velocity_noise_std)
                     measured_radial_vel = base_radial + self.radar_rng.gauss(0.0, rv_std)
+                    
+                    # Task 9: Apply Doppler aliasing if enabled
+                    if self.doppler_aliasing_enabled:
+                        measured_radial_vel, doppler_ambiguity_flag = _apply_doppler_aliasing(
+                            measured_radial_vel, self.max_unambiguous_radial_velocity)
 
         if uncertainty is not None:
             range_variance = round(uncertainty["range_variance"], 6)
@@ -1173,6 +1223,9 @@ class RadarLikeModel:
                 if measured_det is not None and extended_return else None),
             "return_strength": (
                 measured_det.get("return_strength", 1.0) if measured_det is not None else None),
+            # Task 9: Doppler ambiguity. True when the measured radial velocity
+            # has been wrapped due to exceeding max_unambiguous_radial_velocity.
+            "doppler_ambiguity_flag": bool(doppler_ambiguity_flag),
         }
 
     def _finalize_step(self, t, pos_before, pos_after):
