@@ -306,6 +306,21 @@ class RadarLikeModel:
     DEFAULT_MAX_UNAMBIGUOUS_RV = 100.0        # units/sec, effectively no limit by default
     DEFAULT_DOPPLER_ALIASING_ENABLED = False  # disabled by default
 
+    # Task 10: Ghost detections from multipath and side-lobe effects. Radar ghosts
+    # are false detections caused by multipath reflections, side lobes, or range/bearing
+    # errors. Each ghost is associated with a source target and has its own type,
+    # error distribution, and probability.
+    DEFAULT_GHOST_DETECTION_ENABLED = False   # disabled by default
+    DEFAULT_GHOST_PROBABILITY = 0.05          # per-target ghost probability per scan
+    # Ghost types and their characteristics (probability ratio, range error std, bearing error std)
+    GHOST_TYPES = {
+        "multipath":        {"prob": 0.4, "range_error_std": 1.0, "bearing_error_std": math.radians(3.0)},
+        "side_lobe":        {"prob": 0.3, "range_error_std": 0.5, "bearing_error_std": math.radians(5.0)},
+        "duplicate":        {"prob": 0.2, "range_error_std": 0.2, "bearing_error_std": math.radians(1.0)},
+        "multipath_range":  {"prob": 0.05, "range_error_std": 3.0, "bearing_error_std": math.radians(0.5)},
+        "multipath_bearing":{"prob": 0.05, "range_error_std": 0.3, "bearing_error_std": math.radians(8.0)},
+    }
+
     # Environmental condition -> degradation multipliers. attenuation_db
     # subtracts directly from SNR; noise_mult scales every reported
     # variance; pd_mult/pfa_mult scale the effective per-detection
@@ -490,6 +505,15 @@ class RadarLikeModel:
         self.doppler_aliasing_enabled = scn.get(
             "doppler_aliasing_enabled",
             radar_cfg.get("doppler_aliasing_enabled", self.DEFAULT_DOPPLER_ALIASING_ENABLED))
+
+        # Task 10: Ghost detections from multipath and side-lobe effects.
+        # Scenario override -> top-level "radar" config section -> built-in default.
+        self.ghost_detection_enabled = scn.get(
+            "ghost_detection_enabled",
+            radar_cfg.get("ghost_detection_enabled", self.DEFAULT_GHOST_DETECTION_ENABLED))
+        self.ghost_probability = scn.get(
+            "ghost_probability",
+            radar_cfg.get("ghost_probability", self.DEFAULT_GHOST_PROBABILITY))
 
         self._capture = {}  # uav_id -> captured true/final-perceived data for the current step
         self.rows = []
@@ -820,6 +844,110 @@ class RadarLikeModel:
             if p <= limit:
                 return k - 1
 
+    # ------------------------------------------------------------------
+    # Task 10: Ghost detections from multipath and side-lobe effects
+    # ------------------------------------------------------------------
+    def _generate_ghosts(self, true_dets, uav_pos):
+        """Generates ghost detections for real (non-phantom) detections caused by
+        multipath reflections, side lobes, and range/bearing errors. Each ghost is
+        associated with a source target (its parent), has a ghost type, and includes
+        error-corrupted range/bearing measurements.
+        
+        Returns a list of ghost detection dicts with fields:
+          - id: synthetic ghost ID
+          - x, y: detected position (from corrupted range/bearing)
+          - measured_range, measured_bearing: corrupted measurements
+          - confidence: reduced from parent target
+          - is_ghost: True
+          - ghost_type: one of GHOST_TYPES keys
+          - source_target_id: parent target id
+          - parent_confidence: original target's confidence
+        """
+        ghosts = []
+        if not self.ghost_detection_enabled or not true_dets:
+            return ghosts
+        
+        for parent_det in true_dets:
+            parent_id = parent_det.get("id")
+            if parent_id == "phantom" or parent_id is None:
+                continue
+            
+            # Probabilistically generate a ghost for this target
+            if self.radar_rng.random() > self.ghost_probability:
+                continue
+            
+            # Select ghost type based on probabilities
+            ghost_type = self.radar_rng.choices(
+                list(self.GHOST_TYPES.keys()),
+                weights=[self.GHOST_TYPES[gt]["prob"] for gt in self.GHOST_TYPES.keys()],
+                k=1
+            )[0]
+            
+            ghost_spec = self.GHOST_TYPES[ghost_type]
+            
+            # Get true target position for ghost generation
+            parent_x, parent_y = parent_det["x"], parent_det["y"]
+            
+            # Compute true range/bearing to parent
+            dx = parent_x - uav_pos[0]
+            dy = parent_y - uav_pos[1]
+            true_range = math.hypot(dx, dy)
+            true_bearing = math.atan2(dy, dx)
+            
+            # Apply ghost-type-specific errors
+            range_error = self.radar_rng.gauss(0.0, ghost_spec["range_error_std"])
+            bearing_error = self.radar_rng.gauss(0.0, ghost_spec["bearing_error_std"])
+            
+            ghost_range = true_range + range_error
+            ghost_bearing = true_bearing + bearing_error
+            
+            # Ensure range stays positive
+            ghost_range = max(ghost_range, 0.05)
+            
+            # Convert back to x/y
+            ghost_x = uav_pos[0] + ghost_range * math.cos(ghost_bearing)
+            ghost_y = uav_pos[1] + ghost_range * math.sin(ghost_bearing)
+            
+            # Ghost confidence is lower than parent target
+            parent_conf = parent_det.get("confidence", 0.8)
+            ghost_conf = max(0.0, min(1.0, parent_conf * 0.5 + self.radar_rng.gauss(0.0, 0.1)))
+            
+            ghost_dict = {
+                "id": f"{parent_id}_ghost_{ghost_type}_{len(ghosts)}",
+                "x": ghost_x,
+                "y": ghost_y,
+                "distance": ghost_range,
+                "measured_range": ghost_range,
+                "measured_bearing": ghost_bearing,
+                "confidence": round(ghost_conf, 3),
+                "is_ghost": True,
+                "ghost_type": ghost_type,
+                "source_target_id": parent_id,
+                "parent_confidence": round(parent_conf, 3),
+                "_uncertainty": self._measurement_uncertainty(ghost_range),
+            }
+            
+            ghosts.append(ghost_dict)
+        
+        return ghosts
+
+    # ------------------------------------------------------------------
+    # Task 6: radar false alarm / clutter generation
+    # ------------------------------------------------------------------
+    def _poisson_sample(self, lam):
+        """Knuth's algorithm, dependency-free. Returns a non-negative int
+        drawn from Poisson(lam); 0 if lam <= 0."""
+        if lam <= 0:
+            return 0
+        limit = math.exp(-lam)
+        k = 0
+        p = 1.0
+        while True:
+            k += 1
+            p *= self.radar_rng.random()
+            if p <= limit:
+                return k - 1
+
     def _generate_clutter(self, uav_pos, heading=None, half_fov=None):
         """Generates this scan's confirmed radar clutter detections for one
         UAV, confined to its own [clutter_range_min, clutter_range_max]
@@ -996,6 +1124,15 @@ class RadarLikeModel:
 
                         self._apply_confidence_error(scan)
                         self._apply_faulty_sensor(scan, _uav_id)
+
+                        # Task 10: radar ghost detections from multipath and
+                        # side-lobe effects - generated fresh every step,
+                        # associated with source targets, marked as ghosts.
+                        ghosts = self._generate_ghosts(scan, uav_pos)
+                        if ghosts:
+                            for ghost in ghosts:
+                                self._apply_radar_noise(ghost, uav_pos, {})
+                            scan.extend(ghosts)
 
                         # Task 6: radar false alarms / clutter - generated
                         # fresh every step, independent of the config-driven
@@ -1226,6 +1363,17 @@ class RadarLikeModel:
             # Task 9: Doppler ambiguity. True when the measured radial velocity
             # has been wrapped due to exceeding max_unambiguous_radial_velocity.
             "doppler_ambiguity_flag": bool(doppler_ambiguity_flag),
+            # Task 10: Ghost detections from multipath and side-lobe effects.
+            # ghost_flag: True if this is a ghost detection
+            # ghost_type: type of ghost (multipath, side_lobe, duplicate, etc)
+            # source_target_id: ID of the parent/source target this ghost is derived from
+            # parent_confidence: confidence of the source target (for comparison)
+            "ghost_flag": bool(measured_det.get("is_ghost", False)) if measured_det is not None else False,
+            "ghost_type": measured_det.get("ghost_type") if measured_det is not None else None,
+            "source_target_id": measured_det.get("source_target_id") if measured_det is not None else None,
+            "parent_confidence": (
+                measured_det.get("parent_confidence")
+                if measured_det is not None and measured_det.get("is_ghost") else None),
         }
 
     def _finalize_step(self, t, pos_before, pos_after):
