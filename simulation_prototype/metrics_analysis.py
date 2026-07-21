@@ -117,6 +117,134 @@ def communication_metrics(rows):
     }
 
 
+def _calibration_pairs(rows):
+    """Extracts (probability_of_detection, detected) pairs for confidence-
+    calibration analysis - see radar_like_model.calibration_pairs, which
+    this mirrors so the fusion-pipeline rows (which carry the same field
+    names) can be analyzed the same way without importing radar_like_model
+    here. Pairs the radar's own reported probability_of_detection for a
+    real target against whether it was actually detected, excluding
+    false-alarm/clutter rows, dropout rows, and hard range/FOV-gated
+    misses (radar_pd_miss_flag) - none of those outcomes were actually
+    determined by the PD roll, so pairing them in would make the check
+    tautological or contaminated rather than a real calibration signal.
+    confidence_score is deliberately not used here (see radar_like_model
+    for why: it's only ever present on rows already known, by
+    construction, to be a genuine detection or confirmed false alarm, so
+    calibrating it against that trivially-true label is uninformative)."""
+    pairs = []
+    for r in rows:
+        if r.get("false_alarm_flag") or r.get("dropout_flag") or r.get("radar_pd_miss_flag"):
+            continue
+        status = r.get("detection_status")
+        if status not in ("detected", "missed"):
+            continue
+        p = r.get("probability_of_detection")
+        if p is None:
+            continue
+        pairs.append((float(p), status == "detected"))
+    return pairs
+
+
+def _reliability_bins(pairs, num_bins=10):
+    """Buckets (confidence, correct) pairs into num_bins equal-width bins
+    over [0, 1], e.g. bin 7 of 10 holds confidences in [0.7, 0.8)."""
+    bins = [[] for _ in range(num_bins)]
+    for conf, correct in pairs:
+        idx = min(int(conf * num_bins), num_bins - 1)
+        idx = max(idx, 0)
+        bins[idx].append((conf, correct))
+    return bins
+
+
+def confidence_calibration_metrics(rows, num_bins=10):
+    """Confidence-calibration metrics answering the core question: does a
+    reported radar detection probability of, say, 0.8 actually correspond
+    to about an 80% correct-detection frequency across repeated trials?
+    (See radar_like_model.calibration_pairs / _calibration_pairs above for
+    exactly which rows count and why confidence_score isn't the right
+    field to use here.)
+
+    Computes, over every (probability_of_detection, detected) pair found
+    in rows (see _calibration_pairs):
+      - expected_calibration_error (ECE): bin-count-weighted average gap
+        between each bin's mean confidence and its actual accuracy.
+      - maximum_calibration_error (MCE): the worst single-bin gap.
+      - brier_score: mean squared error between confidence and the
+        binary correctness outcome.
+      - negative_log_likelihood: mean binary log-loss of confidence as a
+        predicted probability of correctness.
+      - overconfidence_rate / underconfidence_rate: fraction of samples
+        falling in bins where confidence exceeds accuracy (overconfident)
+        or falls short of it (underconfident).
+      - reliability_bins: per-bin sample count, mean accuracy, mean
+        confidence, and confidence-minus-accuracy gap - the data behind a
+        reliability diagram.
+    """
+    pairs = _calibration_pairs(rows)
+    n = len(pairs)
+    if n == 0:
+        return {
+            "n_samples": 0,
+            "expected_calibration_error": None,
+            "maximum_calibration_error": None,
+            "brier_score": None,
+            "negative_log_likelihood": None,
+            "overconfidence_rate": None,
+            "underconfidence_rate": None,
+            "reliability_bins": [],
+        }
+
+    eps = 1e-7
+    brier_terms, nll_terms = [], []
+    for conf, correct in pairs:
+        y = 1.0 if correct else 0.0
+        brier_terms.append((conf - y) ** 2)
+        p = min(max(conf, eps), 1.0 - eps)
+        nll_terms.append(-(y * math.log(p) + (1.0 - y) * math.log(1.0 - p)))
+
+    bins = _reliability_bins(pairs, num_bins)
+    ece, mce = 0.0, 0.0
+    overconfident_n, underconfident_n = 0, 0
+    reliability_bins = []
+    for i, b in enumerate(bins):
+        lo, hi = i / num_bins, (i + 1) / num_bins
+        if not b:
+            reliability_bins.append({
+                "bin_range": [round(lo, 4), round(hi, 4)],
+                "n": 0, "bin_accuracy": None, "bin_confidence": None, "gap": None,
+            })
+            continue
+        bin_confidence = statistics.mean(c for c, _ in b)
+        bin_accuracy = statistics.mean(1.0 if y else 0.0 for _, y in b)
+        gap = bin_confidence - bin_accuracy
+        weight = len(b) / n
+        ece += weight * abs(gap)
+        mce = max(mce, abs(gap))
+        if gap > 0:
+            overconfident_n += len(b)
+        elif gap < 0:
+            underconfident_n += len(b)
+        reliability_bins.append({
+            "bin_range": [round(lo, 4), round(hi, 4)],
+            "n": len(b),
+            "bin_accuracy": round(bin_accuracy, 4),
+            "bin_confidence": round(bin_confidence, 4),
+            "gap": round(gap, 4),
+        })
+
+    return {
+        "n_samples": n,
+        "expected_calibration_error": round(ece, 4),
+        "maximum_calibration_error": round(mce, 4),
+        "brier_score": round(statistics.mean(brier_terms), 6),
+        "negative_log_likelihood": round(statistics.mean(nll_terms), 6),
+        "overconfidence_rate": round(overconfident_n / n, 4),
+        "underconfidence_rate": round(underconfident_n / n, 4),
+        "reliability_bins": reliability_bins,
+    }
+
+
 def run_once(config, scenario_name, seed):
     """Runs the full radar -> track -> fusion -> decision pipeline once
     with the given seed and returns a flat metrics dict."""
@@ -145,6 +273,17 @@ def run_once(config, scenario_name, seed):
     }
     out.update(perception_metrics(rows))
     out.update(communication_metrics(rows))
+
+    calibration = confidence_calibration_metrics(rows)
+    out.update({
+        "expected_calibration_error": calibration["expected_calibration_error"],
+        "maximum_calibration_error": calibration["maximum_calibration_error"],
+        "brier_score": calibration["brier_score"],
+        "negative_log_likelihood": calibration["negative_log_likelihood"],
+        "overconfidence_rate": calibration["overconfidence_rate"],
+        "underconfidence_rate": calibration["underconfidence_rate"],
+        "calibration_n_samples": calibration["n_samples"],
+    })
     return out
 
 
@@ -161,6 +300,11 @@ SWARM_FIELDS = [
     "collision_risk_count", "total_near_misses", "mission_success", "avg_response_time_s",
     "avg_formation_error", "unnecessary_avoidance_count", "missed_response_count",
     "wrong_decisions", "swarm_stability",
+]
+CALIBRATION_FIELDS = [
+    "expected_calibration_error", "maximum_calibration_error", "brier_score",
+    "negative_log_likelihood", "overconfidence_rate", "underconfidence_rate",
+    "calibration_n_samples",
 ]
 
 
@@ -188,7 +332,7 @@ def main():
     fieldnames = ([
         "scenario", "run_number", "fusion_mode", "false_positive_rate", "false_negative_rate",
         "noise_level", "latency_steps", "dropout_probability", "confidence_error_level",
-    ] + SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS)
+    ] + SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS)
 
     rows = []
     scenario_runs = {}  # scenario_name -> list of per-run metric dicts, for the console summary
@@ -209,7 +353,7 @@ def main():
                 **params,
                 "mission_success": "Yes" if m["mission_success"] else "No",
             }
-            for key in SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS:
+            for key in SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS:
                 if key != "mission_success":
                     row[key] = m[key]
             rows.append(row)
@@ -232,7 +376,9 @@ def main():
               f"avg_collision_risk={_mean(m['collision_risk_count'] for m in run_metrics_list)}  "
               f"avg_rmse_position={_mean(m['rmse_position_error'] for m in run_metrics_list)}  "
               f"avg_track_continuity={_mean(m['track_continuity'] for m in run_metrics_list)}  "
-              f"avg_messages_sent={_mean(m['messages_sent'] for m in run_metrics_list)}")
+              f"avg_messages_sent={_mean(m['messages_sent'] for m in run_metrics_list)}  "
+              f"avg_ece={_mean(m['expected_calibration_error'] for m in run_metrics_list)}  "
+              f"avg_brier={_mean(m['brier_score'] for m in run_metrics_list)}")
 
 
 if __name__ == "__main__":

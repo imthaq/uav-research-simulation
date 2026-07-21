@@ -38,12 +38,15 @@ def load_results_csv(path):
                         pass
                 elif k in ['avg_response_time_s', 'avg_formation_error', 'avg_confidence_error',
                           'false_positive_rate', 'false_negative_rate', 'noise_level', 
-                          'dropout_probability', 'confidence_error_level']:
+                          'dropout_probability', 'confidence_error_level',
+                          'expected_calibration_error', 'maximum_calibration_error',
+                          'brier_score', 'negative_log_likelihood',
+                          'overconfidence_rate', 'underconfidence_rate']:
                     try:
                         row[k] = float(row[k])
                     except (ValueError, TypeError):
                         pass
-                elif k == 'latency_steps':
+                elif k in ['latency_steps', 'calibration_n_samples']:
                     try:
                         row[k] = int(row[k])
                     except (ValueError, TypeError):
@@ -84,7 +87,9 @@ def compute_scenario_stats(scenario_rows):
     """Compute mean, stdev, 95% CI for each metric in a scenario."""
     metrics = {}
     metric_names = ['collision_risk_count', 'mission_success', 'avg_response_time_s', 
-                    'avg_formation_error', 'missed_response_count', 'fusion_recovery_count']
+                    'avg_formation_error', 'missed_response_count', 'fusion_recovery_count',
+                    'expected_calibration_error', 'maximum_calibration_error', 'brier_score',
+                    'negative_log_likelihood', 'overconfidence_rate', 'underconfidence_rate']
     
     for metric in metric_names:
         values = [row.get(metric) for row in scenario_rows if row.get(metric) is not None]
@@ -117,7 +122,8 @@ def fusion_mode_comparison(rows):
     fusion_groups = group_by_fusion_mode(rows)
     
     results = {}
-    metric_names = ['collision_risk_count', 'avg_response_time_s', 'avg_formation_error']
+    metric_names = ['collision_risk_count', 'avg_response_time_s', 'avg_formation_error',
+                     'expected_calibration_error', 'brier_score']
     
     for metric in metric_names:
         mode_values = {}
@@ -189,7 +195,8 @@ def paired_comparison_naive_vs_trust(rows):
     """Compare naive_fusion vs trust_weighted_fusion in paired scenarios."""
     by_scenario = group_by_scenario(rows)
     
-    paired_data = {'collision_risk_count': [], 'avg_response_time_s': [], 'avg_formation_error': []}
+    paired_data = {'collision_risk_count': [], 'avg_response_time_s': [], 'avg_formation_error': [],
+                   'expected_calibration_error': [], 'brier_score': []}
     
     for scenario, scenario_rows in by_scenario.items():
         naive_rows = [r for r in scenario_rows if r.get('fusion_mode') == 'naive_fusion']
@@ -322,6 +329,12 @@ def main():
         if 'mission_success' in stats_dict:
             s = stats_dict['mission_success']
             print(f"  mission_success: {s['mean']*100:.0f}%")
+        if 'expected_calibration_error' in stats_dict:
+            s = stats_dict['expected_calibration_error']
+            print(f"  confidence_calibration: ECE mean={s['mean']:.4f}, stdev={s['stdev']:.4f}")
+        if 'brier_score' in stats_dict:
+            s = stats_dict['brier_score']
+            print(f"  brier_score: mean={s['mean']:.4f}, stdev={s['stdev']:.4f}")
     
     if analyses['fusion_mode_comparison']:
         print(f"\n=== Fusion Mode Comparison (ANOVA) ===")

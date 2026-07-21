@@ -143,6 +143,24 @@ scn.get(key, radar_cfg.get(key, default)):
   - radar_confidence_error: extra Gaussian miscalibration applied to every
     detection's confidence at the radar-reporting stage, on top of
     whatever Perception already applied.
+
+Confidence calibration (Task 3)
+--------------------------------
+Every row that carries a confidence_score now also carries
+confidence_correct: True if that confidence was reported for a genuine
+target return (detection_status == "detected"), False if it was reported
+for a false alarm / clutter return (false_alarm_flag), or None if no
+confidence was reported at all (missed detections, dropouts - there's
+nothing to calibrate there since the radar never issued a confidence).
+
+This (confidence_score, confidence_correct) pair is exactly the input a
+calibration check needs: it asks "of all the times the radar reported
+confidence ~0.8, was the underlying detection actually genuine about 80%
+of the time?" calibration_pairs() below extracts that pair list from a
+list of rows; radar_calibration_analysis.py and
+metrics_analysis.confidence_calibration_metrics() consume it to compute
+Expected/Maximum Calibration Error, Brier score, negative log-likelihood,
+and reliability-bin accuracy/confidence.
 """
 
 import argparse
@@ -970,6 +988,14 @@ class RadarLikeModel:
             "detected_x": round(detected_x, 4) if detected_x is not None else None,
             "detected_y": round(detected_y, 4) if detected_y is not None else None,
             "confidence_score": confidence,
+            # Task 3: confidence calibration. True/False only when a
+            # confidence was actually reported (a detection or a false
+            # alarm); None for missed/dropout rows, where the radar never
+            # issued a confidence value to begin with.
+            "confidence_correct": (
+                True if status == "detected" else
+                (False if false_alarm else None)
+            ),
             "detection_status": status,
             "false_alarm_flag": bool(false_alarm),
             "missed_detection_flag": bool(missed),
@@ -1068,6 +1094,30 @@ class RadarLikeModel:
             if all(self.sim.reached_goal):
                 break
         return self.rows
+
+
+# ------------------------------------------------------------------
+# Task 3: confidence calibration
+# ------------------------------------------------------------------
+def calibration_pairs(rows):
+    """Extracts (confidence, correct) pairs for confidence-calibration
+    analysis from a list of radar rows (as produced by RadarLikeModel.run()
+    or the equivalent fields surviving in the swarm pipeline's rows).
+
+    Only rows where the radar actually reported a confidence_score are
+    included - confidence_correct is None for missed-detection/dropout
+    rows because no confidence was ever issued there, so they carry no
+    calibration information. 'correct' means the confidence was reported
+    for a genuine target detection (True) as opposed to a false alarm /
+    clutter return (False)."""
+    pairs = []
+    for r in rows:
+        conf = r.get("confidence_score")
+        correct = r.get("confidence_correct")
+        if conf is None or correct is None:
+            continue
+        pairs.append((float(conf), bool(correct)))
+    return pairs
 
 
 def main():
