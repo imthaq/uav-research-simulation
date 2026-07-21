@@ -264,6 +264,14 @@ class RadarLikeModel:
     SNR_DB_MIN = -20.0
     SNR_DB_MAX = 60.0
 
+    # Task 8: extended-target radar returns. Off by default - a target
+    # reports its usual single (dominant) return unless enabled.
+    DEFAULT_EXTENDED_TARGET_ENABLED = False
+    DEFAULT_MEAN_RETURNS_PER_TARGET = 1.0     # mean TOTAL returns per target per scan, dominant included
+    DEFAULT_RETURN_SPREAD_STD = 0.3           # meters, 1-sigma position spread of extra returns around the target
+    DEFAULT_RETURN_STRENGTH_VARIATION = 0.3   # fractional strength/confidence drop range for extra returns, [0, 1]
+    DEFAULT_MAXIMUM_RETURNS_PER_TARGET = 4    # hard cap on returns per target per scan, dominant included
+
     # Environmental condition -> degradation multipliers. attenuation_db
     # subtracts directly from SNR; noise_mult scales every reported
     # variance; pd_mult/pfa_mult scale the effective per-detection
@@ -419,6 +427,25 @@ class RadarLikeModel:
         self._env_factors = self.ENV_FACTORS[self.environmental_condition]
         self._reliability_factors = self.RELIABILITY_FACTORS[self.radar_reliability_state]
 
+        # Task 8: extended-target radar returns. Scenario override ->
+        # top-level "radar" config section -> built-in default, same
+        # pattern as every other radar_* key above.
+        self.extended_target_enabled = scn.get(
+            "extended_target_enabled",
+            radar_cfg.get("extended_target_enabled", self.DEFAULT_EXTENDED_TARGET_ENABLED))
+        self.mean_returns_per_target = scn.get(
+            "mean_returns_per_target",
+            radar_cfg.get("mean_returns_per_target", self.DEFAULT_MEAN_RETURNS_PER_TARGET))
+        self.return_spread_std = scn.get(
+            "return_spread_std", radar_cfg.get("return_spread_std", self.DEFAULT_RETURN_SPREAD_STD))
+        self.return_strength_variation = scn.get(
+            "return_strength_variation",
+            radar_cfg.get("return_strength_variation", self.DEFAULT_RETURN_STRENGTH_VARIATION))
+        self.maximum_returns_per_target = scn.get(
+            "maximum_returns_per_target",
+            radar_cfg.get("maximum_returns_per_target", self.DEFAULT_MAXIMUM_RETURNS_PER_TARGET))
+        self._extended_return_counter = 0  # monotonically increasing id suffix for generated extra returns
+
         self._clutter_counter = 0  # monotonically increasing id suffix for generated clutter points
 
         self._capture = {}  # uav_id -> captured true/final-perceived data for the current step
@@ -572,6 +599,79 @@ class RadarLikeModel:
         d["distance"] = noisy_range
         d["measured_range"] = noisy_range
         d["measured_bearing"] = noisy_bearing
+
+    # ------------------------------------------------------------------
+    # Task 8: extended-target radar returns
+    # ------------------------------------------------------------------
+    def _generate_extended_returns(self, dominant, uav_pos):
+        """A physically large or complex target - not an ideal point
+        scatterer - can produce more than one radar return per scan: a
+        spread of points around its true position, with strength varying
+        per return (typically one dominant return plus one or more weaker
+        ones), and not necessarily present every scan (intermittent).
+
+        Given `dominant` (the target's normal, already noise-applied
+        detection dict, produced by _apply_radar_noise), returns a list of
+        extra detection dicts scattered around it; empty if
+        extended_target_enabled is off or this scan happens to draw zero
+        extras. `dominant` itself is left untouched.
+
+        Each extra is a shallow copy of `dominant` with its own id,
+        x/y/distance, confidence, and return_strength - so it flows
+        through the same downstream steering/logging paths (via its
+        `is_extended_return`/`parent_target_id` flags) as any other real
+        return, without the tracker mistaking it for a second permanent
+        track: extras are Mahalanobis-gated nearest-neighbor candidates
+        just like any detection, but their random position spread and
+        intermittent per-scan count mean they rarely land close enough to
+        the same spot on consecutive scans to accumulate the consecutive
+        hits a tentative track needs to confirm (see radar_track_model.py)
+        - they show up as short-lived tentative tracks instead of
+        permanent ones for the same physical object.
+        """
+        if not self.extended_target_enabled:
+            return []
+
+        # mean_returns_per_target is the mean TOTAL number of returns
+        # (dominant included); the mean *extra* count is one less than
+        # that. Poisson-sampled per scan/per target so the extra count
+        # itself is intermittent - some scans a target reports only its
+        # dominant return, others it reports several - then hard-capped
+        # by maximum_returns_per_target (dominant included) regardless of
+        # how the draw comes out.
+        extra_mean = max(0.0, self.mean_returns_per_target - 1.0)
+        max_extra = max(0, self.maximum_returns_per_target - 1)
+        num_extra = min(self._poisson_sample(extra_mean), max_extra)
+        if num_extra <= 0:
+            return []
+
+        base_id = dominant.get("id")
+        base_conf = dominant.get("confidence")
+        extras = []
+        for _ in range(num_extra):
+            self._extended_return_counter += 1
+            ex_x = dominant["x"] + self.radar_rng.gauss(0.0, self.return_spread_std)
+            ex_y = dominant["y"] + self.radar_rng.gauss(0.0, self.return_spread_std)
+            extra = dict(dominant)
+            extra["id"] = f"{base_id}_ext{self._extended_return_counter}"
+            extra["x"] = ex_x
+            extra["y"] = ex_y
+            extra["distance"] = math.hypot(ex_x - uav_pos[0], ex_y - uav_pos[1])
+            # Weaker-return strength: a random fraction of the dominant
+            # return's own strength/confidence, so extras are typically
+            # (not always, since the draw can land close to 1.0) weaker
+            # than the point the tracker/steering already treats as the
+            # target - "one dominant return plus weaker returns".
+            strength_frac = clamp(
+                1.0 - self.radar_rng.uniform(0.0, self.return_strength_variation),
+                0.05, 1.0)
+            extra["return_strength"] = round(strength_frac, 4)
+            if base_conf is not None:
+                extra["confidence"] = round(clamp(base_conf * strength_frac, 0.0, 1.0), 4)
+            extra["is_extended_return"] = True
+            extra["parent_target_id"] = base_id
+            extras.append(extra)
+        return extras
 
     # ------------------------------------------------------------------
     # Task 7: field of view
@@ -836,6 +936,21 @@ class RadarLikeModel:
                         for d in scan:
                             self._apply_radar_noise(d, uav_pos, true_by_id)
 
+                        # Task 8: extended-target radar returns - added
+                        # after the dominant return's own range/bearing
+                        # noise (so extras scatter around the position a
+                        # real radar would report, not the noiseless
+                        # ground truth), before confidence-error/fault
+                        # injection so extras go through the same
+                        # per-scan effects as any other real return from
+                        # this radar.
+                        if self.extended_target_enabled:
+                            extra_returns = []
+                            for d in scan:
+                                extra_returns.extend(
+                                    self._generate_extended_returns(d, uav_pos))
+                            scan.extend(extra_returns)
+
                         self._apply_confidence_error(scan)
                         self._apply_faulty_sensor(scan, _uav_id)
 
@@ -912,7 +1027,7 @@ class RadarLikeModel:
     def _make_row(self, t, uav_id, true_det, measured_det, observer_pos,
                   observer_vel, uav_vel, status,
                   false_alarm=False, missed=False, dropout=False,
-                  radar_pd_miss=False, clutter=False):
+                  radar_pd_miss=False, clutter=False, extended_return=False):
         target_id = true_det["id"] if true_det is not None else (
             measured_det.get("id") if measured_det is not None and measured_det.get("id") != "phantom"
             else None
@@ -1047,6 +1162,17 @@ class RadarLikeModel:
             "probability_of_false_alarm": probability_of_false_alarm,
             "radar_environmental_condition": self.environmental_condition,
             "radar_reliability_state": self.radar_reliability_state,
+            # Task 8: extended-target radar returns. return_strength
+            # defaults to full strength (1.0) for a normal single/dominant
+            # return; extras carry their own sampled fraction. is_extended
+            # _return/parent_target_id are False/None outside extended-
+            # target mode.
+            "is_extended_return": bool(extended_return),
+            "parent_target_id": (
+                measured_det.get("parent_target_id")
+                if measured_det is not None and extended_return else None),
+            "return_strength": (
+                measured_det.get("return_strength", 1.0) if measured_det is not None else None),
         }
 
     def _finalize_step(self, t, pos_before, pos_after):
@@ -1114,6 +1240,27 @@ class RadarLikeModel:
                     t, uav_id, None, fd, observer_pos, observer_vel,
                     uav_vel, status="false_alarm", false_alarm=True,
                     clutter=bool(fd.get("is_radar_clutter"))))
+
+            # Task 8: extended-target radar returns - each extra return
+            # generated in _generate_extended_returns gets its own row,
+            # distinct from its parent's normal "detected" row, so a
+            # single object with several instantaneous returns doesn't
+            # get collapsed back into one during evaluation. true_target_x
+            # /y and target_velocity are still taken from the parent's
+            # true state (it's the same physical object); target_id is
+            # overridden to the extra return's own synthetic id so it
+            # doesn't collide with the parent's row.
+            if self.extended_target_enabled:
+                true_lookup = {d["id"]: d for d in true_dets}
+                for d in perceived:
+                    if not d.get("is_extended_return"):
+                        continue
+                    parent_true = true_lookup.get(d.get("parent_target_id"))
+                    row = self._make_row(
+                        t, uav_id, parent_true, d, observer_pos, observer_vel,
+                        uav_vel, status="detected", extended_return=True)
+                    row["target_id"] = d["id"]
+                    self.rows.append(row)
 
     # ------------------------------------------------------------------
     # Driver

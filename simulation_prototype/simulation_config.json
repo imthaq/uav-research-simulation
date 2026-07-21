@@ -76,7 +76,12 @@
     "radar_radial_velocity_noise_std": 0.1,
     "radar_latency_steps": 0,
     "radar_dropout_probability": 0.0,
-    "radar_confidence_error": 0.0
+    "radar_confidence_error": 0.0,
+    "extended_target_enabled": false,
+    "mean_returns_per_target": 1.0,
+    "return_spread_std": 0.3,
+    "return_strength_variation": 0.3,
+    "maximum_returns_per_target": 4
   },
   "environment_modes": {
     "clear": {
@@ -1072,6 +1077,91 @@
       "description": "Detection conditions are made unusually clean (radar_detection_probability 0.85->0.98, radar_range_noise_std 0.4->0.15, i.e. tracks are actually accurate) while confidence is simultaneously pushed down by 0.4 (radar_confidence_bias) - genuinely good detections that self-report as unreliable.",
       "radar_confidence_error": 0.05,
       "radar_confidence_bias": -0.4
+    },
+    "registration_perfect": {
+      "description": "Cross-modal fusion (radar+vision+LiDAR) with registration enabled but every offset/rotation/timestamp/drift knob at zero - reference case confirming perfect registration reproduces plain multi-modal fusion with no added bias.",
+      "fusion_mode": "naive_fusion",
+      "cross_modal_registration": {
+        "enabled": true,
+        "radar_to_vision_x_offset": 0.0,
+        "radar_to_vision_y_offset": 0.0,
+        "radar_to_lidar_x_offset": 0.0,
+        "radar_to_lidar_y_offset": 0.0,
+        "rotation_error_deg": 0.0,
+        "timestamp_alignment_error_steps": 0,
+        "coordinate_frame_mismatch": "none",
+        "drift_rate_x_per_step": 0.0,
+        "drift_rate_y_per_step": 0.0
+      }
+    },
+    "registration_small_error": {
+      "description": "Small, fixed radar<->vision/LiDAR miscalibration: sub-half-meter offsets, a couple degrees of boresight rotation error, and a 1-step timestamp misalignment - the kind of residual error left after a reasonably careful extrinsic calibration.",
+      "fusion_mode": "naive_fusion",
+      "cross_modal_registration": {
+        "enabled": true,
+        "radar_to_vision_x_offset": 0.2,
+        "radar_to_vision_y_offset": -0.15,
+        "radar_to_lidar_x_offset": -0.1,
+        "radar_to_lidar_y_offset": 0.15,
+        "rotation_error_deg": 2.0,
+        "timestamp_alignment_error_steps": 1,
+        "coordinate_frame_mismatch": "none",
+        "drift_rate_x_per_step": 0.0,
+        "drift_rate_y_per_step": 0.0
+      }
+    },
+    "registration_medium_error": {
+      "description": "Moderate radar<->vision/LiDAR miscalibration: meter-scale offsets, ~8 degrees of rotation error, and a 2-step timestamp misalignment - a calibration that has drifted noticeably out of spec but hasn't failed.",
+      "fusion_mode": "naive_fusion",
+      "cross_modal_registration": {
+        "enabled": true,
+        "radar_to_vision_x_offset": 1.0,
+        "radar_to_vision_y_offset": -0.8,
+        "radar_to_lidar_x_offset": -0.6,
+        "radar_to_lidar_y_offset": 0.9,
+        "rotation_error_deg": 8.0,
+        "timestamp_alignment_error_steps": 2,
+        "coordinate_frame_mismatch": "none",
+        "drift_rate_x_per_step": 0.0,
+        "drift_rate_y_per_step": 0.0
+      }
+    },
+    "registration_severe_error": {
+      "description": "Severe radar<->vision/LiDAR miscalibration: multi-meter offsets, ~25 degrees of rotation error, a 5-step timestamp misalignment, and LiDAR's reported y-axis actually flipped (coordinate_frame_mismatch) - a badly botched or failed extrinsic calibration.",
+      "fusion_mode": "naive_fusion",
+      "cross_modal_registration": {
+        "enabled": true,
+        "radar_to_vision_x_offset": 3.0,
+        "radar_to_vision_y_offset": -2.5,
+        "radar_to_lidar_x_offset": -2.0,
+        "radar_to_lidar_y_offset": 2.8,
+        "rotation_error_deg": 25.0,
+        "timestamp_alignment_error_steps": 5,
+        "coordinate_frame_mismatch": "none",
+        "lidar_coordinate_frame_mismatch": "y_flip",
+        "drift_rate_x_per_step": 0.0,
+        "drift_rate_y_per_step": 0.0
+      }
+    },
+    "registration_drifting_error": {
+      "description": "Slowly drifting radar<->vision/LiDAR registration error: starts near perfect registration but both offsets grow steadily every step (as if a mount were slowly working loose or a clock were slowly skewing over the mission), so error compounds over the run instead of staying fixed.",
+      "fusion_mode": "naive_fusion",
+      "cross_modal_registration": {
+        "enabled": true,
+        "radar_to_vision_x_offset": 0.05,
+        "radar_to_vision_y_offset": 0.05,
+        "radar_to_lidar_x_offset": -0.05,
+        "radar_to_lidar_y_offset": -0.05,
+        "rotation_error_deg": 0.0,
+        "timestamp_alignment_error_steps": 0,
+        "coordinate_frame_mismatch": "none",
+        "drift_rate_x_per_step": 0.01,
+        "drift_rate_y_per_step": 0.008,
+        "vision_drift_rate_x_per_step": 0.01,
+        "vision_drift_rate_y_per_step": 0.008,
+        "lidar_drift_rate_x_per_step": -0.01,
+        "lidar_drift_rate_y_per_step": -0.008
+      }
     }
   },
   "vision": {
@@ -1106,5 +1196,17 @@
       "process_accel_std": 1.0,
       "init_velocity_var": 25.0
     }
+  },
+  "cross_modal_registration": {
+    "enabled": false,
+    "radar_to_vision_x_offset": 0.0,
+    "radar_to_vision_y_offset": 0.0,
+    "radar_to_lidar_x_offset": 0.0,
+    "radar_to_lidar_y_offset": 0.0,
+    "rotation_error_deg": 0.0,
+    "timestamp_alignment_error_steps": 0,
+    "coordinate_frame_mismatch": "none",
+    "drift_rate_x_per_step": 0.0,
+    "drift_rate_y_per_step": 0.0
   }
 }

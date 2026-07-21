@@ -261,7 +261,37 @@ class RadarTracker:
         for track in active:
             track.predict(dt)
 
-        matched_track = self._match(active, detections)
+        # Task 8: two-pass gated association. Pass 1 matches tracks
+        # against real (non-extended) detections only - with no extended
+        # returns present this is exactly the original single-pass
+        # algorithm, so behavior for every pre-existing scenario is
+        # unchanged. Pass 2 then matches whatever's left (any leftover
+        # real detections plus every extra return) against tracks pass 1
+        # didn't claim, so an extra return can still reinforce a track
+        # whose own dominant return was missed this scan - but it can
+        # never steal the match its dominant return would otherwise have
+        # made, which is what let a single extended target spawn
+        # duplicate tracks before this fix (an extra winning the gate
+        # this scan left the genuine dominant unmatched, and unlike an
+        # extra, an unmatched dominant is allowed to seed a new track).
+        real_idx = [i for i, d in enumerate(detections) if not d.get("is_extended_return")]
+
+        matched_track, matched_det = {}, {}
+        for ti, local_di in self._match(active, [detections[i] for i in real_idx]).items():
+            di = real_idx[local_di]
+            matched_track[ti] = di
+            matched_det[di] = ti
+
+        leftover_tracks_idx = [ti for ti in range(len(active)) if ti not in matched_track]
+        leftover_dets_idx = [di for di in range(len(detections)) if di not in matched_det]
+        if leftover_tracks_idx and leftover_dets_idx:
+            sub_tracks = [active[ti] for ti in leftover_tracks_idx]
+            sub_dets = [detections[di] for di in leftover_dets_idx]
+            for sub_ti, sub_di in self._match(sub_tracks, sub_dets).items():
+                ti = leftover_tracks_idx[sub_ti]
+                di = leftover_dets_idx[sub_di]
+                matched_track[ti] = di
+                matched_det[di] = ti
 
         still_active = []
         for ti, track in enumerate(active):
@@ -276,6 +306,18 @@ class RadarTracker:
         matched_det_indices = set(matched_track.values())
         for di, det in enumerate(detections):
             if di in matched_det_indices:
+                continue
+            # Task 8: extended-target radar returns. An extra return that
+            # didn't match any existing track represents the same
+            # physical object as its (separately-reported) dominant
+            # return, not a new one - so unlike an ordinary unmatched
+            # detection, it must not spawn a track of its own. It can
+            # still strengthen/update an existing track above (it went
+            # through the same gated match as any other detection), and
+            # is simply dropped here when it doesn't. Without this, a
+            # single extended target's scattered extra returns would
+            # each seed their own permanent track.
+            if det.get("is_extended_return"):
                 continue
             new_track = RadarTrack(
                 self.radar_id, self._next_track_num, det["x"], det["y"],
@@ -296,7 +338,10 @@ def build_tracks(scenario_name, detection_rows, dt, measurement_std=1.0):
     Only rows with an actual x/y this step (status "detected" or
     "false_alarm") are fed to the tracker - "missed"/"dropout" rows have no
     position to associate, so a real radar simply wouldn't see anything to
-    report that step."""
+    report that step. Task 8: each detection also carries the row's
+    is_extended_return flag (False if the row/key predates that field), so
+    RadarTracker.update can let extra returns match/reinforce an existing
+    track without letting an unmatched one spawn a new one."""
     by_radar_step = {}
     for row in detection_rows:
         if row["detected_x"] is None or row["detected_y"] is None:
@@ -306,6 +351,7 @@ def build_tracks(scenario_name, detection_rows, dt, measurement_std=1.0):
             "x": row["detected_x"],
             "y": row["detected_y"],
             "confidence": row["confidence_score"],
+            "is_extended_return": bool(row.get("is_extended_return", False)),
         })
 
     radar_ids = sorted({r for r, _ in by_radar_step})
