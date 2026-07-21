@@ -200,6 +200,8 @@ from collections import deque
 import numpy as np
 
 from models.radar_like_model import RadarLikeModel
+from models.vision_like_model import VisionLikeModel
+from models.lidar_like_model import LiDARLikeModel
 from tracking.radar_track_model import build_tracks
 import models.communication_model
 
@@ -315,6 +317,109 @@ TRUST_NO_PEERS_AGREEMENT_SCORE = 0.6
 # Reference covariance trace (world units^2) used to normalize the
 # covariance-tightness signal into roughly [0, 1].
 TRUST_COVARIANCE_REFERENCE = 4.0
+
+# --- cross-modal registration error ----------------------------------------
+# Models an imperfect extrinsic calibration between radar (the reference
+# frame every other modality is expressed in) and vision/LiDAR: a real
+# multi-sensor UAV never has a perfect radar<->camera/radar<->LiDAR
+# transform, so what a vision or LiDAR detection *reports* as (x, y) isn't
+# quite where that object actually is in the radar's frame. This is
+# deliberately applied to the sensor's raw measured position *before* it
+# ever becomes a fusion source (_as_modal_source below) - it changes what
+# fuse_group actually averages together, not just what gets logged
+# afterwards. Radar itself is always treated as the (error-free) reference
+# frame; every knob below is a radar-to-vision or radar-to-lidar error.
+#
+# Config shape (per-scenario "cross_modal_registration" block, falling back
+# to a top-level default of the same name, both optional):
+#   enabled                                  - master on/off switch
+#   radar_to_vision_x_offset / _y_offset      - static translation error (world units)
+#   radar_to_lidar_x_offset / _y_offset
+#   rotation_error_deg                        - shared boresight/mounting rotation
+#                                                error, in degrees, applied about the
+#                                                world origin; vision_rotation_error_deg
+#                                                / lidar_rotation_error_deg override it
+#                                                per modality
+#   timestamp_alignment_error_steps           - shared clock-sync error, in sim
+#                                                steps; vision_timestamp_alignment_error_steps
+#                                                / lidar_timestamp_alignment_error_steps
+#                                                override it per modality. Applied by
+#                                                shifting which step that modality's
+#                                                detections are grouped into relative
+#                                                to radar's own clock, so a mistimed
+#                                                detection gets clustered against the
+#                                                *wrong* step's radar tracks.
+#   coordinate_frame_mismatch                 - "none" | "axis_swap" | "x_flip" |
+#                                                "y_flip"; a wrong axis convention
+#                                                baked into the raw reading, applied
+#                                                before rotation/offset. vision_/
+#                                                lidar_coordinate_frame_mismatch
+#                                                override it per modality.
+#   drift_rate_x_per_step / drift_rate_y_per_step - shared, slowly-growing extra
+#                                                offset (world units per step,
+#                                                added on top of the static offset)
+#                                                for a calibration that degrades
+#                                                over the run rather than staying
+#                                                fixed; vision_/lidar_ variants
+#                                                override per modality.
+DEFAULT_REGISTRATION_CFG = {"enabled": False}
+
+
+def _modality_reg_param(reg_cfg, modality, key, default=0.0):
+    """Per-modality override of a shared registration-error knob: looks
+    for f"{modality}_{key}" first (e.g. "vision_rotation_error_deg"), falls
+    back to the shared f"{key}" (e.g. "rotation_error_deg"), then to
+    `default`."""
+    specific = reg_cfg.get(f"{modality}_{key}")
+    if specific is not None:
+        return specific
+    return reg_cfg.get(key, default)
+
+
+def _apply_registration_error(x, y, t, modality, reg_cfg):
+    """Transforms a vision/LiDAR detection's raw (x, y) into the radar
+    reference frame *as this UAV's imperfect calibration would actually
+    place it* - coordinate-frame mismatch, then boresight rotation error,
+    then a static offset that can also slowly drift with time step `t`.
+    Radar itself (modality == "radar") is always passed through unchanged,
+    since it's the reference frame every offset above is defined against.
+    Returns (x, y) unchanged if registration error is disabled or either
+    input coordinate is missing."""
+    if x is None or y is None or modality == "radar" or not reg_cfg or not reg_cfg.get("enabled", False):
+        return x, y
+
+    mismatch = _modality_reg_param(reg_cfg, modality, "coordinate_frame_mismatch", "none") or "none"
+    if mismatch == "axis_swap":
+        x, y = y, x
+    elif mismatch == "x_flip":
+        x = -x
+    elif mismatch == "y_flip":
+        y = -y
+
+    rot_deg = _modality_reg_param(reg_cfg, modality, "rotation_error_deg", 0.0)
+    if rot_deg:
+        theta = math.radians(rot_deg)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        x, y = x * cos_t - y * sin_t, x * sin_t + y * cos_t
+
+    static_x = reg_cfg.get(f"radar_to_{modality}_x_offset", 0.0)
+    static_y = reg_cfg.get(f"radar_to_{modality}_y_offset", 0.0)
+    drift_x = _modality_reg_param(reg_cfg, modality, "drift_rate_x_per_step", 0.0)
+    drift_y = _modality_reg_param(reg_cfg, modality, "drift_rate_y_per_step", 0.0)
+    x += static_x + drift_x * t
+    y += static_y + drift_y * t
+    return x, y
+
+
+def _registration_timestamp_shift(reg_cfg, modality):
+    """Steps to shift a modality's detections by, relative to radar's own
+    clock, to model a timestamp-alignment error. A detection generated at
+    true step `t` is grouped as if it happened at step `t + shift`, so it
+    gets clustered against the *wrong* step's radar tracks whenever shift
+    != 0 - a real consequence for fusion, not just a logged value."""
+    if not reg_cfg or not reg_cfg.get("enabled", False) or modality == "radar":
+        return 0
+    return int(_modality_reg_param(reg_cfg, modality, "timestamp_alignment_error_steps", 0))
 
 # How the five signals (agreement, freshness, dropout frequency,
 # confidence, covariance tightness) are weighted into one target trust
@@ -526,8 +631,84 @@ def _as_source(track, sensor_latency_steps=0, sensor_dropout_probability=0.0, pe
     return {
         "source_id": track["track_id"],
         "radar_id": track["radar_id"],
+        "modality": "radar",
         "x": track["est_x"],
         "y": track["est_y"],
+        "confidence": confidence,
+        "status": status,
+        "status_weight": status_weight,
+        "measurement_age_steps": age_steps,
+        "sensor_latency_steps": sensor_latency_steps,
+        "dropout_state": dropout_state,
+        "persistent_trust": round(float(persistent_trust), 4),
+        "reliability": round(float(reliability), 4),
+        "covariance": cov,
+        "eff_covariance": cov / reliability,
+    }
+
+
+def _as_modal_source(row, modality, t, reg_cfg, sensor_latency_steps=0,
+                      sensor_dropout_probability=0.0, persistent_trust=1.0):
+    """Normalizes a raw vision or LiDAR detection row (from
+    VisionLikeModel/LiDARLikeModel - no track lifecycle of their own, so
+    no status/missed_count the way radar tracks have) into the same
+    fusion-source shape _as_source produces, so both plug into the
+    existing _cluster / fuse_group machinery unchanged.
+
+    Registration error (_apply_registration_error) is applied to the raw
+    measured (x, y) *here*, before this source ever reaches clustering or
+    weighted averaging - so a mis-registered vision/LiDAR detection
+    actually pulls the fused estimate toward the wrong place, it doesn't
+    just get annotated as wrong after the fact."""
+    uav_id = row.get("vision_id") if modality == "vision" else row.get("lidar_id")
+    source_id = f"{modality}_{uav_id}"
+
+    confidence = row.get("confidence_score")
+    confidence = confidence if confidence is not None else 0.5
+
+    raw_x, raw_y = row.get("measured_x"), row.get("measured_y")
+    x, y = _apply_registration_error(raw_x, raw_y, t, modality, reg_cfg)
+
+    cov = None
+    raw_cov = row.get("covariance")
+    if raw_cov is not None:
+        try:
+            mat = json.loads(raw_cov) if isinstance(raw_cov, str) else raw_cov
+            P = np.array(mat, dtype=float)[:2, :2]
+            if P.shape == (2, 2) and np.all(np.isfinite(P)):
+                cov = P
+        except (ValueError, TypeError, IndexError):
+            cov = None
+    if cov is None:
+        base_var = FALLBACK_POSITION_VAR / max(confidence, 0.05)
+        cov = np.diag([base_var, base_var])
+
+    age_steps = row.get("measurement_age_steps") or 0
+    dropout_state = bool(row.get("is_stale", False))
+    # Vision/LiDAR detections here have no confirmed/coasting/lost track
+    # lifecycle of their own - treat status as neutral ("confirmed") and
+    # let confidence, covariance, and age do the discounting instead.
+    status = "confirmed"
+    status_weight = STATUS_RELIABILITY.get(status, 1.0)
+
+    age_discount = 1.0 / (1.0 + AGE_DECAY_PER_STEP * age_steps)
+    latency_discount = 1.0 / (1.0 + LATENCY_DECAY_PER_STEP * sensor_latency_steps)
+    dropout_discount = DROPOUT_PENALTY if dropout_state else 1.0
+    dropout_risk_discount = 1.0 - 0.5 * min(max(sensor_dropout_probability, 0.0), 1.0)
+    persistent_trust = max(TRUST_MIN, min(TRUST_MAX, persistent_trust))
+
+    reliability = max(
+        MIN_RELIABILITY,
+        status_weight * confidence * age_discount * latency_discount
+        * dropout_discount * dropout_risk_discount * persistent_trust,
+    )
+
+    return {
+        "source_id": source_id,
+        "radar_id": source_id,  # generic per-sensor key reused by _cluster/TrustTracker
+        "modality": modality,
+        "x": x,
+        "y": y,
         "confidence": confidence,
         "status": status,
         "status_weight": status_weight,
@@ -1036,6 +1217,131 @@ def build_fused_log(scenario_name, config, architecture=ARCHITECTURE_CENTRALIZED
     return fused_rows
 
 
+def build_cross_modal_fused_log(scenario_name, config, seed=None, use_adaptive_trust=True):
+    """Like build_fused_log, but fuses radar tracks together with raw
+    vision and LiDAR detections in the same step - radar is always the
+    (error-free) reference frame; vision/LiDAR positions are passed
+    through _apply_registration_error / _registration_timestamp_shift
+    first (see the "cross-modal registration error" constants above), so
+    a scenario's configured registration error actually changes what
+    fuse_group averages together, not just what gets logged.
+
+    Only the "centralized" architecture is supported here (there's one
+    fusion pass per step across every available modality); reuses the
+    same fusion_update_rate / max_staleness_steps / TrustTracker
+    machinery build_fused_log already has for radar-only fusion.
+    """
+    model = RadarLikeModel(config, scenario_name)
+    detection_rows = model.run()
+    dt = config["sim"]["dt"]
+    track_rows = build_tracks(scenario_name, detection_rows, dt)
+    scn = model.sim.scn
+
+    vision_rows = [r for r in VisionLikeModel(config, scenario_name).run()
+                   if r.get("validity_flag") and not r.get("is_clutter") and r.get("measured_x") is not None]
+    lidar_rows = [r for r in LiDARLikeModel(config, scenario_name).run()
+                  if r.get("validity_flag") and r.get("measured_x") is not None]
+
+    reg_cfg = scn.get("cross_modal_registration", config.get("cross_modal_registration", DEFAULT_REGISTRATION_CFG))
+
+    fusion_mode = scn.get(
+        "fusion_mode", config.get("perception_errors", {}).get("fusion_mode", NO_FUSION))
+    comm_cfg = scn.get("communication", config.get("communication", {}))
+
+    fusion_update_rate = config.get("sim", {}).get("fusion_update_rate", 0) or comm_cfg.get(
+        "fusion_update_rate", 0)
+    fusion_update_interval_steps = (
+        max(1, round(1.0 / (fusion_update_rate * dt))) if fusion_update_rate else 1)
+    max_staleness_steps = comm_cfg.get("max_staleness_steps")
+
+    trust_tracker = None
+    if use_adaptive_trust:
+        trust_cfg = scn.get("trust_adaptation", config.get("trust_adaptation", {}))
+        if trust_cfg.get("enabled", True):
+            trust_tracker = TrustTracker(
+                alpha_up=trust_cfg.get("alpha_up", TRUST_ALPHA_UP),
+                alpha_down=trust_cfg.get("alpha_down", TRUST_ALPHA_DOWN),
+                dropout_window_steps=trust_cfg.get("dropout_window_steps", TRUST_DROPOUT_WINDOW_STEPS),
+                disagreement_soft_distance=trust_cfg.get(
+                    "disagreement_soft_distance", TRUST_DISAGREEMENT_SOFT_DISTANCE),
+                disagreement_hard_distance=trust_cfg.get(
+                    "disagreement_hard_distance", TRUST_DISAGREEMENT_HARD_DISTANCE),
+            )
+
+    # Radar keeps the reference clock; vision/LiDAR rows are regrouped
+    # under a *shifted* time_step to model a timestamp-alignment error -
+    # a detection generated at true step t is clustered as if it happened
+    # at step t + shift, against whatever radar tracks actually exist at
+    # that (wrong) step.
+    vision_shift = _registration_timestamp_shift(reg_cfg, "vision")
+    lidar_shift = _registration_timestamp_shift(reg_cfg, "lidar")
+
+    by_step_radar, by_step_vision, by_step_lidar = {}, {}, {}
+    for row in track_rows:
+        by_step_radar.setdefault(row["time_step"], []).append(row)
+    for row in vision_rows:
+        by_step_vision.setdefault(row["time_step"] + vision_shift, []).append(row)
+    for row in lidar_rows:
+        by_step_lidar.setdefault(row["time_step"] + lidar_shift, []).append(row)
+
+    all_steps = sorted(set(by_step_radar) | set(by_step_vision) | set(by_step_lidar))
+
+    fused_rows = []
+    held_fused, held_step = None, None
+    for step in all_steps:
+        if step % fusion_update_interval_steps == 0:
+            sources = []
+            for t in by_step_radar.get(step, []):
+                s = _as_source(t, model.radar_latency_steps, model.radar_dropout_probability,
+                                persistent_trust=trust_tracker.get(t["radar_id"]) if trust_tracker else 1.0)
+                sources.append(s)
+            for r in by_step_vision.get(step, []):
+                sid = f"vision_{r.get('vision_id')}"
+                s = _as_modal_source(r, "vision", step, reg_cfg,
+                                      persistent_trust=trust_tracker.get(sid) if trust_tracker else 1.0)
+                sources.append(s)
+            for r in by_step_lidar.get(step, []):
+                sid = f"lidar_{r.get('lidar_id')}"
+                s = _as_modal_source(r, "lidar", step, reg_cfg,
+                                      persistent_trust=trust_tracker.get(sid) if trust_tracker else 1.0)
+                sources.append(s)
+
+            if max_staleness_steps is not None:
+                sources = [s for s in sources if s["measurement_age_steps"] <= max_staleness_steps]
+
+            fused = _fuse_sources(sources, fusion_mode, CLUSTER_DISTANCE)
+            for f in fused:
+                f["architecture"] = ARCHITECTURE_CENTRALIZED
+                f["local_uav_id"] = None
+                group_ids = f["source_ids"]
+                f["source_modalities"] = ";".join(sorted({sid.rsplit("_", 1)[0] for sid in group_ids}))
+
+            _advance_trust(sources, trust_tracker, CLUSTER_DISTANCE)
+            held_fused, held_step = fused, step
+            is_stale = False
+        else:
+            fused, is_stale = (held_fused or []), True
+
+        for f in fused:
+            fused_rows.append({
+                "scenario": scenario_name,
+                "time_step": step,
+                "fusion_mode": fusion_mode,
+                "architecture": f["architecture"],
+                "fused_x": round(f["x"], 4),
+                "fused_y": round(f["y"], 4),
+                "fused_confidence": round(f["confidence"], 4),
+                "num_sources": f["num_sources"],
+                "source_modalities": f.get("source_modalities", ""),
+                "position_variance": f.get("position_variance"),
+                "avg_persistent_trust": f.get("avg_persistent_trust"),
+                "source_track_ids": ";".join(f["source_ids"]),
+                "is_stale": is_stale,
+                "fusion_age_steps": (step - held_step) if held_step is not None else 0,
+            })
+    return fused_rows
+
+
 def estimation_error_against_ground_truth(fused_rows, ground_truth_xy):
     """Evaluation-only helper (never used by fusion itself - see the
     module docstring): given fused rows and a known ground-truth (x, y)
@@ -1080,6 +1386,10 @@ def main():
     parser.add_argument("--disable-adaptive-trust", action="store_true",
                          help="Fix persistent_trust at 1.0 for every source (pre-Task-14 behavior) "
                               "instead of tracking dynamic per-UAV trust across the run")
+    parser.add_argument("--cross-modal", action="store_true",
+                         help="Fuse radar tracks together with vision/LiDAR detections "
+                              "(subject to each scenario's cross_modal_registration error) "
+                              "instead of radar-only fusion. Centralized architecture only.")
     parser.add_argument("--log", default="logs/fused_track_log.csv")
     args = parser.parse_args()
 
@@ -1094,12 +1404,19 @@ def main():
     architectures = list(ARCHITECTURES) if args.compare_architectures else [args.architecture]
 
     all_rows = []
-    for name in scenario_names:
-        for architecture in architectures:
-            rows = build_fused_log(name, config, architecture=architecture, seed=args.seed,
-                                    use_adaptive_trust=not args.disable_adaptive_trust)
+    if args.cross_modal:
+        for name in scenario_names:
+            rows = build_cross_modal_fused_log(name, config, seed=args.seed,
+                                                use_adaptive_trust=not args.disable_adaptive_trust)
             all_rows.extend(rows)
-            print(f"{name} [{architecture}]: {len(rows)} fused rows")
+            print(f"{name} [cross_modal]: {len(rows)} fused rows")
+    else:
+        for name in scenario_names:
+            for architecture in architectures:
+                rows = build_fused_log(name, config, architecture=architecture, seed=args.seed,
+                                        use_adaptive_trust=not args.disable_adaptive_trust)
+                all_rows.extend(rows)
+                print(f"{name} [{architecture}]: {len(rows)} fused rows")
 
     if all_rows:
         import os
