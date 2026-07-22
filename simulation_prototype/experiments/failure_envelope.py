@@ -43,15 +43,20 @@ OUT_PATH = os.path.join(_ROOT_DIR, "swarm_failure_envelope.csv")
 def run_stress_pipeline(config, scenario_name, seed, num_faulty_uavs=0,
                          fault_duration_steps=0, fault_start_step=None,
                          packet_loss_prob=0.0, disagreement_bias_std=0.0,
-                         registration_bias=0.0):
-    """run_dynamic_trust_controller (Task 17) plus the four fault-
-    injection hooks the failure envelope needs and nothing else does."""
+                         registration_bias=0.0, comm_delay_steps=0,
+                         instrument=False):
+    """run_dynamic_trust_controller (Task 17) plus the fault-injection
+    hooks the failure envelope / combined-fault sweeps need and nothing
+    else does. instrument=True (Task 20 only) additionally times the
+    fuse_step calls and counts messages/tracks - off by default so it
+    costs Task 18/19 nothing."""
+    import time
     cfg = copy.deepcopy(config)
     cfg["sim"]["seed"] = seed
     scn = cfg["scenarios"].setdefault(scenario_name, {})
     scn["safety_margin_mode"] = "quality_monitor"
-    scn["fusion_mode"] = "trust_weighted_fusion"
-    scn["trust_adaptation"] = {"enabled": True}
+    scn.setdefault("fusion_mode", "trust_weighted_fusion")
+    scn.setdefault("trust_adaptation", {"enabled": True})
 
     model = RadarLikeModel(cfg, scenario_name)
     sim = model.sim
@@ -72,6 +77,10 @@ def run_stress_pipeline(config, scenario_name, seed, num_faulty_uavs=0,
     obstacle_track_id = {}
     pending_estimates = {}
     trust_tracker = TrustTracker()
+    delay_queue = []  # (release_step, estimates_dict), used when comm_delay_steps > 0
+    fusion_time_total = 0.0
+    message_count = 0
+    consistency_spreads = []
 
     t = 0
     for t in range(sim.max_steps):
@@ -104,8 +113,21 @@ def run_stress_pipeline(config, scenario_name, seed, num_faulty_uavs=0,
             else:
                 obstacle_track_row_by_uav[i] = obs_row
 
+        if instrument:
+            message_count += len(obstacle_track_row_by_uav)
+            rows = list(obstacle_track_row_by_uav.values())
+            if len(rows) >= 2:
+                xs = [r["est_x"] for r in rows]
+                ys = [r["est_y"] for r in rows]
+                mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+                spread = (sum((x - mx) ** 2 + (y - my) ** 2 for x, y in zip(xs, ys))
+                          / len(xs)) ** 0.5
+                consistency_spreads.append(spread)
+            t0 = time.perf_counter()
         fused_clusters = fuse_step(list(obstacle_track_row_by_uav.values()), fusion_mode,
                                     trust_tracker=trust_tracker)
+        if instrument:
+            fusion_time_total += time.perf_counter() - t0
         track_id_to_uav = {tid: uav for uav, tid in obstacle_track_id.items()}
         fused_by_uav = {}
         for cluster in fused_clusters:
@@ -115,14 +137,29 @@ def run_stress_pipeline(config, scenario_name, seed, num_faulty_uavs=0,
                     fused_by_uav[uav] = cluster
 
         sim.decide_move(t, true_dets_all, raw_percepts, external_estimates=pending_estimates)
-        pending_estimates = {i: {"x": c["x"], "y": c["y"], "confidence": c["confidence"],
-                                  "num_sources": c["num_sources"],
-                                  "position_variance": c.get("position_variance")}
-                             for i, c in fused_by_uav.items()
-                             if rng.random() >= packet_loss_prob}
+        fresh_estimates = {i: {"x": c["x"], "y": c["y"], "confidence": c["confidence"],
+                                "num_sources": c["num_sources"],
+                                "position_variance": c.get("position_variance")}
+                           for i, c in fused_by_uav.items()
+                           if rng.random() >= packet_loss_prob}
+        if comm_delay_steps > 0:
+            delay_queue.append((t + 1 + comm_delay_steps, fresh_estimates))
+            pending_estimates = {}
+            while delay_queue and delay_queue[0][0] <= t + 1:
+                pending_estimates.update(delay_queue.pop(0)[1])
+        else:
+            pending_estimates = fresh_estimates
 
     metrics = sim._metrics(t)
     metrics.update(_dependability_metrics(sim))
+    if instrument:
+        steps_run = t + 1
+        metrics["fusion_update_time_ms"] = round(1000 * fusion_time_total / steps_run, 4)
+        metrics["message_count"] = message_count
+        metrics["tracks_created"] = sum(trk._next_track_num - 1 for trk in trackers.values())
+        metrics["distributed_consistency_std"] = (
+            round(sum(consistency_spreads) / len(consistency_spreads), 4)
+            if consistency_spreads else None)
     return metrics
 
 
