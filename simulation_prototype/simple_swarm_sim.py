@@ -4,6 +4,8 @@ import json
 import math
 import random
 
+from perception_quality_monitor import PerceptionQualityMonitor, GOOD, DEGRADED, CRITICAL
+
 
 def dist(p1, p2):
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
@@ -317,6 +319,49 @@ class Simulation:
         # tangential term keeps a UAV sliding around a threat instead of stalling head-on against the goal-seeking vector
         self.tangential_gain = c.get("tangential_gain", 4.0)
 
+        # --- Task 13: uncertainty-aware safety margins ---
+        #
+        # How much extra separation a UAV keeps from a perceived contact
+        # on top of the raw sensed distance, and how that extra margin is
+        # derived. Scenario-overridable (same precedence as fusion_mode)
+        # so different scenarios can be compared side by side:
+        #   "fixed"           - always base_safety_margin, regardless of
+        #                        how (un)trustworthy the detection is.
+        #   "covariance"      - margin grows with sqrt(position
+        #                        covariance/variance) attached to the
+        #                        detection (e.g. fusion_position_variance
+        #                        from the radar/track/fusion pipeline).
+        #                        No covariance available -> treated as
+        #                        maximally uncertain, not silently as
+        #                        certain.
+        #   "confidence"      - margin grows with (1 - reported
+        #                        confidence).
+        #   "quality_monitor" - margin is driven by the Task 12
+        #                        PerceptionQualityMonitor's GOOD/
+        #                        DEGRADED/CRITICAL verdict for the
+        #                        detection: GOOD keeps the base margin,
+        #                        DEGRADED scales the margin by how far
+        #                        below "good" the composite quality score
+        #                        is, and CRITICAL discards the avoidance
+        #                        geometry entirely in favor of
+        #                        critical_quality_action.
+        self.safety_margin_mode = self.scn.get(
+            "safety_margin_mode", c.get("safety_margin_mode", "fixed"))
+        self.base_safety_margin = c.get("base_safety_margin", 0.0)
+        self.uncertainty_margin_gain = c.get("uncertainty_margin_gain", 1.0)
+        self.maximum_safety_margin = c.get("maximum_safety_margin", 5.0)
+        # What a CRITICAL quality_monitor verdict does instead of normal
+        # avoidance steering: "hold" (stop in place), "regroup" (head
+        # toward the swarm centroid at reduced speed), or
+        # "request_fresh_observation" (crawl toward the goal at greatly
+        # reduced speed instead of acting on distrusted geometry).
+        self.critical_quality_action = c.get("critical_quality_action", "hold")
+        self.quality_monitor = PerceptionQualityMonitor()
+
+        self.hold_count = 0
+        self.regroup_count = 0
+        self.request_fresh_observation_count = 0
+
         self.perception = [Perception(self.scn, self.rng, self.sensor_range)
                             for _ in range(self.num_uavs)]
         self.reached_goal = [False] * self.num_uavs
@@ -504,8 +549,90 @@ class Simulation:
                 "kind": kind, "id": eid, "x": fx, "y": fy,
                 "distance": d_fused, "confidence": est.get("confidence", 0.5),
                 "is_fused": True, "fusion_contributors": est.get("num_sources", 1),
+                # Task 13: real fused-position uncertainty, when the
+                # caller (run_radar_track_fusion_pipeline) has it, so
+                # safety_margin_mode="covariance" isn't stuck assuming
+                # maximal uncertainty for every externally-fused estimate.
+                "position_variance": est.get("position_variance"),
             }
             dets[:] = [d for d in dets if d.get("id") != eid] + [fused_det]
+
+    def _quality_level_for(self, d):
+        """Maps one perceived detection dict to the (best-effort) subset
+        of PerceptionQualityMonitor signals this sim can actually supply
+        at decision time, and returns (level, composite_score). Only
+        self-reported/derived signals are used - never ground truth - so
+        this stays consistent with the monitor's own no-ground-truth
+        contract. Signals this sim doesn't track per detection (missed-
+        update count, innovation, calibration error, comms age, dropout
+        rate) are simply omitted, which PerceptionQualityMonitor already
+        handles by renormalizing over whatever *is* present."""
+        covariance = d.get("position_variance")
+        if covariance is None:
+            covariance = d.get("covariance_trace")
+        signals = {
+            "track_covariance": covariance,
+            "current_trust_value": d.get("confidence"),
+            # More independent UAVs corroborating a fused detection is
+            # itself a (weak) agreement signal; an own-sensor detection
+            # (no fusion_contributors) has nothing to compare against, so
+            # it's left out rather than guessed at.
+            "sensor_agreement": (
+                clamp(d["fusion_contributors"] / max(self.num_uavs, 2), 0.0, 1.0)
+                if d.get("is_fused") and d.get("fusion_contributors") else None),
+        }
+        level, score, _ = self.quality_monitor.evaluate(signals)
+        return level, score
+
+    def _compute_safety_margin(self, d):
+        """Task 13: returns (margin, critical_action) for one perceived
+        detection. margin is added on top of the raw sensed distance
+        when deciding how aggressively/how early to avoid a contact -
+        the less this detection can be trusted, the further away it's
+        treated as being. critical_action is None unless
+        safety_margin_mode is "quality_monitor" and this detection's
+        perception quality is judged CRITICAL, in which case it's
+        self.critical_quality_action ("hold" / "regroup" /
+        "request_fresh_observation") and margin is pinned to
+        maximum_safety_margin."""
+        mode = self.safety_margin_mode
+        base = self.base_safety_margin
+        gain = self.uncertainty_margin_gain
+        cap = self.maximum_safety_margin
+
+        if mode == "covariance":
+            covariance = d.get("position_variance")
+            if covariance is None:
+                covariance = d.get("covariance_trace")
+            # No covariance attached to this detection (e.g. own-sensor
+            # detections outside the radar/track/fusion pipeline never
+            # carry one) -> treat conservatively as maximally uncertain
+            # rather than quietly defaulting to "certain".
+            uncertainty = math.sqrt(max(covariance, 0.0)) if covariance is not None else 1.0
+            margin = base + gain * uncertainty
+            return clamp(margin, 0.0, cap), None
+
+        if mode == "confidence":
+            confidence = d.get("confidence")
+            uncertainty = 1.0 - clamp(confidence, 0.0, 1.0) if confidence is not None else 1.0
+            margin = base + gain * uncertainty
+            return clamp(margin, 0.0, cap), None
+
+        if mode == "quality_monitor":
+            level, score = self._quality_level_for(d)
+            if level == CRITICAL:
+                return cap, self.critical_quality_action
+            if level == DEGRADED:
+                uncertainty = 1.0 - (score if score is not None else 0.0)
+                margin = base + gain * uncertainty
+            else:  # GOOD
+                margin = base
+            return clamp(margin, 0.0, cap), None
+
+        # "fixed" (and any unrecognized mode, treated the same way):
+        # constant margin, independent of how trustworthy this
+        # particular detection is.
+        return clamp(base, 0.0, cap), None
 
     def _steer(self, i, perceived):
         tgt = self.targets[i]
@@ -514,21 +641,37 @@ class Simulation:
 
         triggered_real = False
         triggered_phantom = False
+        critical_action = None
+        max_margin_active = 0.0
 
         for d in perceived:
+            margin, quality_action = self._compute_safety_margin(d)
+            max_margin_active = max(max_margin_active, margin)
+            if quality_action is not None:
+                # A single CRITICAL-quality contact is enough to distrust
+                # this step's avoidance geometry as a whole - later
+                # (possibly GOOD-quality) detections don't get to
+                # override that back to normal steering.
+                critical_action = quality_action
+
             rx, ry = self.pos[i][0] - d["x"], self.pos[i][1] - d["y"]
             r = max(d["distance"], 0.3)
             if d.get("kind") == "uav":
                 cutoff = (self.collision_distance * 1.5 if d.get("is_parked")
-                          else self.uav_avoidance_range)
+                          else self.uav_avoidance_range) + margin
                 if r > cutoff:
                     continue
-            elif r > self.sensor_range:
+            elif r > self.sensor_range + margin:
                 continue
+            # Widen the effective danger radius by the uncertainty
+            # margin: a contact is treated as `margin` units closer than
+            # measured, so avoidance kicks in earlier and harder the less
+            # this particular detection can be trusted.
+            r_eff = max(r - margin, 0.3)
             rx, ry = normalize(rx, ry)
-            strength = self.avoidance_gain / r
+            strength = self.avoidance_gain / r_eff
             tx, ty = -ry, rx
-            tangential_strength = self.tangential_gain / r
+            tangential_strength = self.tangential_gain / r_eff
             vx += rx * strength + tx * tangential_strength
             vy += ry * strength + ty * tangential_strength
             if strength > 0.05:
@@ -538,7 +681,43 @@ class Simulation:
                     triggered_real = True
 
         vx, vy = normalize(vx, vy)
-        return vx * self.speed, vy * self.speed, triggered_real, triggered_phantom
+        safety_info = {
+            "mode": self.safety_margin_mode,
+            "max_margin": round(max_margin_active, 4),
+            "critical_action": critical_action,
+        }
+
+        if critical_action is not None:
+            # Task 13: a CRITICAL-quality contact overrides normal
+            # avoidance steering entirely - the swarm can't safely trust
+            # the geometry it would otherwise steer on, so it falls back
+            # to a conservative, perception-quality-independent behavior
+            # rather than computing an avoidance vector from data it
+            # doesn't trust.
+            if critical_action == "hold":
+                return 0.0, 0.0, triggered_real, triggered_phantom, safety_info
+            if critical_action == "regroup":
+                cx = sum(p[0] for p in self.pos) / self.num_uavs
+                cy = sum(p[1] for p in self.pos) / self.num_uavs
+                rvx, rvy = normalize(cx - self.pos[i][0], cy - self.pos[i][1])
+                slow_speed = self.speed * 0.5
+                return rvx * slow_speed, rvy * slow_speed, triggered_real, triggered_phantom, safety_info
+            if critical_action == "request_fresh_observation":
+                crawl_speed = self.speed * 0.25
+                return vx * crawl_speed, vy * crawl_speed, triggered_real, triggered_phantom, safety_info
+
+        # Non-critical uncertainty still throttles speed smoothly instead
+        # of only widening the avoidance radius: "moderate uncertainty ->
+        # increased separation, high uncertainty -> slower movement" from
+        # the design brief. How much of maximum_safety_margin is
+        # currently "in use" by the most uncertain nearby contact scales
+        # the slowdown, up to a 50% reduction at the cap.
+        speed = self.speed
+        if self.maximum_safety_margin > 0:
+            caution = clamp(max_margin_active / self.maximum_safety_margin, 0.0, 1.0)
+            speed = self.speed * (1.0 - 0.5 * caution)
+
+        return vx * speed, vy * speed, triggered_real, triggered_phantom, safety_info
 
     def _get_delayed_perception(self, i, t):
         """Returns the most recent perceived-detection set that has had time
@@ -610,6 +789,9 @@ class Simulation:
                     "error_type": "none",
                     "unnecessary_avoidance": False,
                     "missed_response": False,
+                    "safety_margin_mode": self.safety_margin_mode,
+                    "safety_margin_applied": 0.0,
+                    "quality_action_taken": None,
                 }
                 continue
 
@@ -637,13 +819,21 @@ class Simulation:
                 if key in self._threat_first_true_step and key not in self._threat_first_perceived_step:
                     self._threat_first_perceived_step[key] = t
 
-            vx, vy, triggered_real, triggered_phantom = self._steer(i, perceived)
+            vx, vy, triggered_real, triggered_phantom, safety_info = self._steer(i, perceived)
 
             unnecessary_avoidance = triggered_phantom and not triggered_real
             if unnecessary_avoidance:
                 self.unnecessary_avoidance_count += 1
             if triggered_real:
                 self.avoidance_action_count += 1
+
+            critical_action = safety_info["critical_action"]
+            if critical_action == "hold":
+                self.hold_count += 1
+            elif critical_action == "regroup":
+                self.regroup_count += 1
+            elif critical_action == "request_fresh_observation":
+                self.request_fresh_observation_count += 1
 
             missed_response = False
             for d in true_dets:
@@ -654,7 +844,13 @@ class Simulation:
             new_pos[i][0] = min(max(new_pos[i][0] + vx * self.dt, 0.0), self.cfg["world"]["width"])
             new_pos[i][1] = min(max(new_pos[i][1] + vy * self.dt, 0.0), self.cfg["world"]["height"])
 
-            event = "avoidance" if triggered_real else ("false_avoidance" if triggered_phantom else "move")
+            if critical_action is not None:
+                # A critical-quality contact overrode normal steering
+                # this step - that's more informative than "avoidance"/
+                # "move" for what the UAV actually did.
+                event = critical_action
+            else:
+                event = "avoidance" if triggered_real else ("false_avoidance" if triggered_phantom else "move")
 
             # Which perception-error mechanism(s) fired for this UAV this step
             # (based on the freshly generated sensor reading, not the delayed
@@ -684,6 +880,9 @@ class Simulation:
                 "error_type": error_type,
                 "unnecessary_avoidance": unnecessary_avoidance,
                 "missed_response": missed_response,
+                "safety_margin_mode": safety_info["mode"],
+                "safety_margin_applied": safety_info["max_margin"],
+                "quality_action_taken": critical_action,
             }
 
         active_entities = [e for e in self.entities if self._entity_active(e, t)]
@@ -810,6 +1009,13 @@ class Simulation:
             "fusion_mode": self.fusion_mode,
             "action_taken": info["event"],
 
+            # Task 13: which safety-margin strategy was active, how large
+            # a margin it produced this step (max across perceived
+            # contacts), and which critical_quality_action (if any) fired.
+            "safety_margin_mode": info["safety_margin_mode"],
+            "safety_margin_applied": info["safety_margin_applied"],
+            "quality_action_taken": info["quality_action_taken"],
+
             "num_perceived_detections": len(perceived),
             "num_phantom_detections": sum(1 for d in perceived if d.get("is_phantom")),
             "dist_to_goal": round(dist(self.pos[i], self.targets[i]), 3),
@@ -867,6 +1073,12 @@ class Simulation:
             "avg_response_time_s": round(avg_response_time, 3) if avg_response_time is not None else None,
             "avg_formation_error": round(avg_formation_error, 3) if avg_formation_error is not None else None,
             "avg_confidence_error": round(avg_confidence_error, 3) if avg_confidence_error is not None else None,
+
+            # Task 13: uncertainty-aware safety margins.
+            "safety_margin_mode": self.safety_margin_mode,
+            "hold_count": self.hold_count,
+            "regroup_count": self.regroup_count,
+            "request_fresh_observation_count": self.request_fresh_observation_count,
         }
 
 
@@ -991,7 +1203,16 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
         # then hand this step's estimate off for next step.
         sim.decide_move(t, true_dets_all, raw_percepts, external_estimates=pending_estimates)
         pending_estimates = {i: {"x": c["x"], "y": c["y"], "confidence": c["confidence"],
-                                  "num_sources": c["num_sources"]} for i, c in fused_by_uav.items()}
+                                  "num_sources": c["num_sources"],
+                                  # Task 13: carried through to
+                                  # _inject_external_estimates so
+                                  # safety_margin_mode="covariance" has
+                                  # real per-UAV uncertainty to work with
+                                  # in the full radar/track/fusion
+                                  # pipeline, not just the simplified
+                                  # no_fusion path.
+                                  "position_variance": c.get("position_variance")}
+                             for i, c in fused_by_uav.items()}
         this_step_logs = sim.log_rows[-sim.num_uavs:]
         formation_error_this_step = sim.formation_error_samples[-1] if sim.formation_error_samples else None
 
@@ -1082,6 +1303,11 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
                 "fusion_position_variance": fused.get("position_variance") if fused else None,
                 "fusion_comm_messages": fused.get("comm_messages") if fused else None,
                 "fusion_response_time_steps": fused.get("response_time_steps") if fused else None,
+
+                # Task 13: uncertainty-aware safety margins.
+                "safety_margin_mode": log_row["safety_margin_mode"],
+                "safety_margin_applied": log_row["safety_margin_applied"],
+                "quality_action_taken": log_row["quality_action_taken"],
             })
 
     metrics = sim._metrics(t)

@@ -52,7 +52,14 @@
   "control": {
     "goal_gain": 1.0,
     "avoidance_gain": 6.0,
-    "tangential_gain": 4.0
+    "tangential_gain": 4.0,
+
+    "_safety_margin_note": "Task 13: uncertainty-aware safety margins. safety_margin_mode selects how much extra separation a UAV keeps beyond the raw sensed distance to a contact - 'fixed' (constant base_safety_margin regardless of trust), 'covariance' (scales with sqrt of the detection's position covariance/variance), 'confidence' (scales with 1 - reported confidence), or 'quality_monitor' (driven by the Task 12 PerceptionQualityMonitor's GOOD/DEGRADED/CRITICAL verdict; CRITICAL triggers critical_quality_action instead of normal avoidance steering). Overridable per scenario the same way fusion_mode is.",
+    "safety_margin_mode": "fixed",
+    "base_safety_margin": 0.5,
+    "uncertainty_margin_gain": 2.0,
+    "maximum_safety_margin": 4.0,
+    "critical_quality_action": "hold"
   },
   "perception_errors": {
     "false_positive_rate": 0.0,
@@ -1162,6 +1169,38 @@
         "lidar_drift_rate_x_per_step": -0.01,
         "lidar_drift_rate_y_per_step": -0.008
       }
+    },
+    "safety_margin_fixed": {
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "fixed"
+    },
+    "safety_margin_covariance": {
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "covariance"
+    },
+    "safety_margin_confidence": {
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "confidence"
+    },
+    "safety_margin_quality_monitor": {
+      "false_negative_rate": 0.55,
+      "position_noise_std": 3.5,
+      "confidence_error_level": 0.3,
+      "dropout_prob": 0.04,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "quality_monitor"
     }
   },
   "vision": {
@@ -1181,7 +1220,6 @@
     "central_downlink_latency_steps": 1
   },
   "reproducibility": {
-    "_description": "single place documenting/controlling everything needed to reproduce a run. UAV count/target count/obstacle count/sensor/radar/fusion/communication parameters already live above (swarm.num_uavs, scenarios[*].entities, sensing, radar, scenarios[*].fusion_mode, communication) and per-scenario name + random seed are resolved at run time by run_experiments.py (scenario_names, sim.seed / --base-seed) - not duplicated here to avoid two sources of truth. This block adds the two pieces that weren't config-driven before (trial_count, output_location) plus a record of the tracker's lifecycle/gating constants.",
     "trial_count": 20,
     "output_location": "results",
     "tracker_parameters": {
