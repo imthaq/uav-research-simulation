@@ -89,7 +89,7 @@ from fusion.fusion_model import (
 )
 from metrics_analysis import run_once, confidence_calibration_metrics
 from models.radar_like_model import RadarLikeModel
-from perception_quality_monitor import PerceptionQualityMonitor
+from dependability.perception_quality_monitor import PerceptionQualityMonitor
 from dependability_controllers import (
     attach_dependability_layer, _dependability_metrics, run_any_controller,
 )

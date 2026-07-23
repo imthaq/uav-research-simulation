@@ -78,8 +78,8 @@ from generate_plots import (
     line_ci_plot, bar_ci_plot, gather_rows,
 )
 from metrics_analysis import run_once
-from radar_calibration_analysis import analyze_scenario as radar_calibration_analyze
-from radar_confidence_calibration import _plot_reliability
+from calibration.radar_calibration_analysis import analyze_scenario as radar_calibration_analyze
+from calibration.radar_confidence_calibration import _plot_reliability
 from dependability_common import clone_scenario
 from dependability_controllers import (
     attach_dependability_layer, _dependability_metrics, run_controller,
@@ -89,7 +89,7 @@ from models.radar_like_model import RadarLikeModel
 from fusion.fusion_model import (
     fuse_group, _as_source, COVARIANCE_WEIGHTED_FUSION, COVARIANCE_INTERSECTION_FUSION,
 )
-from selective_swarm_decision import SelectiveDecisionMaker
+from dependability.selective_swarm_decision import SelectiveDecisionMaker
 
 RESULT_RECORD = []  # (plot_name, output_path) for every plot actually written
 
