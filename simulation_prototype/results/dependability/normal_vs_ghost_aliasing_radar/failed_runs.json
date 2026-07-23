@@ -1,0 +1,7 @@
+{
+  "total_failed": 0,
+  "by_arm": {
+    "normal": [],
+    "ghost_aliasing": []
+  }
+}

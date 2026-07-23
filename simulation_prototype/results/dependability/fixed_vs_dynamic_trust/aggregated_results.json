@@ -1,0 +1,15 @@
+{
+  "fixed": {
+    "mean": 1.9474,
+    "stdev": 0.213210777296917,
+    "n": 10
+  },
+  "dynamic": {
+    "mean": 1.95193,
+    "stdev": 0.21290393791045245,
+    "n": 10
+  },
+  "verdict": "fixed performed better on this metric (1.9474 vs 1.95193)",
+  "metric": "nearest-true-object fused position error, meters (lower = better)",
+  "note": "Uses build_fused_log(use_adaptive_trust=True/False) on the same overconfident-faulty-sensor scenario, so any difference is attributable to trust adaptation alone."
+}

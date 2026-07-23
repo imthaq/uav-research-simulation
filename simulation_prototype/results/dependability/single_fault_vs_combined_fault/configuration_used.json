@@ -1,0 +1,86 @@
+{
+  "sim": {
+    "dt": 0.2,
+    "max_steps": 600,
+    "duration_seconds": 120.0,
+    "seed": 42,
+    "fusion_update_rate": 5.0
+  },
+  "scenarios_used": {
+    "very_low_P_D": {
+      "description": "Radar detection probability = 0.1 (misses 90% of targets)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 0.1,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "very_high_P_FA": {
+      "description": "Radar false alarm probability = 0.4 (40% clutter detections)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.4,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "high_dropout": {
+      "description": "Radar dropout probability = 0.7 (sensor intermittently dies)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.7,
+      "radar_latency_steps": 0,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 0,
+      "dropout_prob": 0.7,
+      "confidence_error_level": 0.0
+    },
+    "high_latency": {
+      "description": "Radar latency = 20 steps (~2s delay in fusion decision)",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 1.0,
+      "radar_false_alarm_probability": 0.0,
+      "radar_clutter_density": 0.0,
+      "radar_dropout_probability": 0.0,
+      "radar_latency_steps": 20,
+      "position_noise_std": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0,
+      "latency_steps": 20,
+      "dropout_prob": 0.0,
+      "confidence_error_level": 0.0
+    },
+    "simultaneous_sensor_failures": {
+      "description": "All failures combined: low P_D + high P_FA + clutter + dropout + latency",
+      "fusion_mode": "trust_weighted_fusion",
+      "radar_detection_probability": 0.15,
+      "radar_false_alarm_probability": 0.35,
+      "radar_clutter_density": 0.4,
+      "radar_dropout_probability": 0.6,
+      "radar_latency_steps": 15,
+      "position_noise_std": 1.5,
+      "false_positive_rate": 0.15,
+      "false_negative_rate": 0.3,
+      "latency_steps": 15,
+      "dropout_prob": 0.6,
+      "confidence_error_level": 0.4
+    }
+  }
+}

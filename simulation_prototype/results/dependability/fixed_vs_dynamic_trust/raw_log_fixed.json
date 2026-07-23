@@ -1,0 +1,52 @@
+[
+  {
+    "mean_error": 1.762,
+    "n": 1597,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 2.1423,
+    "n": 1973,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 1.8478,
+    "n": 1658,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 2.242,
+    "n": 2174,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 1.8577,
+    "n": 1614,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 1.8463,
+    "n": 1627,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 1.7311,
+    "n": 1558,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 1.717,
+    "n": 1549,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 2.0452,
+    "n": 1872,
+    "final_faulty_trust": 1.0
+  },
+  {
+    "mean_error": 2.2826,
+    "n": 2172,
+    "final_faulty_trust": 1.0
+  }
+]

@@ -1,0 +1,35 @@
+{
+  "started_at": "2026-07-23T06:19:46.886116+00:00",
+  "wall_clock_seconds": 82.765,
+  "base_seed": 42,
+  "config_path": "/home/bot47/GitProjects/uav-research/simulation_prototype/simulation_config.json",
+  "trials_per_arm": {
+    "pipeline": 10,
+    "calibration_runs": 15,
+    "mission_sim": 20
+  },
+  "comparisons_run": [
+    "calibrated_vs_uncalibrated_confidence",
+    "fixed_vs_dynamic_trust",
+    "fixed_vs_adaptive_safety_margin",
+    "no_abstention_vs_abstention",
+    "no_handoff_vs_handoff",
+    "centralized_vs_distributed_fusion",
+    "covariance_fusion_vs_covariance_intersection",
+    "single_fault_vs_combined_fault",
+    "normal_vs_ghost_aliasing_radar"
+  ],
+  "comparisons_failed": 0,
+  "per_comparison_runtime_seconds": {
+    "calibrated_vs_uncalibrated_confidence": 8.21,
+    "fixed_vs_dynamic_trust": 12.53,
+    "fixed_vs_adaptive_safety_margin": 4.79,
+    "no_abstention_vs_abstention": 4.04,
+    "no_handoff_vs_handoff": 0.0,
+    "centralized_vs_distributed_fusion": 11.55,
+    "covariance_fusion_vs_covariance_intersection": 22.61,
+    "single_fault_vs_combined_fault": 3.44,
+    "normal_vs_ghost_aliasing_radar": 15.59
+  },
+  "output_dir": "/home/bot47/GitProjects/uav-research/simulation_prototype/results/dependability"
+}

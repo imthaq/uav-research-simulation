@@ -1,0 +1,9 @@
+{
+  "total_failed": 0,
+  "by_arm": {
+    "fixed": [],
+    "adaptive_covariance": [],
+    "adaptive_confidence": [],
+    "adaptive_quality_monitor": []
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "centralized": {
+    "mean": 0.27088,
+    "stdev": 0.009355901286829022,
+    "n": 10
+  },
+  "distributed": {
+    "mean": 0.26696,
+    "stdev": 0.011271024798127277,
+    "n": 10
+  },
+  "verdict": "distributed performed better on this metric (0.27088 vs 0.26696)",
+  "metric": "nearest-true-object fused position error, meters, under 40% packet loss"
+}

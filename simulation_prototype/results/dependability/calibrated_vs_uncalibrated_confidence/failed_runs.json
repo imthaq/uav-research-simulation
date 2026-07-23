@@ -1,0 +1,9 @@
+{
+  "total_failed": 0,
+  "by_arm": {
+    "calibrated": [],
+    "mildly_overconfident": [],
+    "severely_overconfident": [],
+    "underconfident": []
+  }
+}

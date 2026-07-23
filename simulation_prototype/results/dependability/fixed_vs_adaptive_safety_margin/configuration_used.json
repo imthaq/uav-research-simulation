@@ -1,0 +1,43 @@
+{
+  "sim": {
+    "dt": 0.2,
+    "max_steps": 600,
+    "duration_seconds": 120.0,
+    "seed": 42,
+    "fusion_update_rate": 5.0
+  },
+  "scenarios_used": {
+    "safety_margin_fixed": {
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "fixed"
+    },
+    "safety_margin_covariance": {
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "covariance"
+    },
+    "safety_margin_confidence": {
+      "false_negative_rate": 0.35,
+      "position_noise_std": 2.0,
+      "confidence_error_level": 0.2,
+      "dropout_prob": 0.01,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "confidence"
+    },
+    "safety_margin_quality_monitor": {
+      "false_negative_rate": 0.55,
+      "position_noise_std": 3.5,
+      "confidence_error_level": 0.3,
+      "dropout_prob": 0.04,
+      "fusion_mode": "trust_weighted_fusion",
+      "safety_margin_mode": "quality_monitor"
+    }
+  }
+}

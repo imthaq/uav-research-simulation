@@ -1,0 +1,52 @@
+[
+  {
+    "mean_error": 0.2817,
+    "n": 5467,
+    "delivery_rate": 1.9173493975903615
+  },
+  {
+    "mean_error": 0.2591,
+    "n": 5578,
+    "delivery_rate": 1.9390592268139402
+  },
+  {
+    "mean_error": 0.2778,
+    "n": 5388,
+    "delivery_rate": 1.800558768748162
+  },
+  {
+    "mean_error": 0.274,
+    "n": 5459,
+    "delivery_rate": 1.8270373859096372
+  },
+  {
+    "mean_error": 0.2663,
+    "n": 5490,
+    "delivery_rate": 1.9087342258663762
+  },
+  {
+    "mean_error": 0.2589,
+    "n": 5573,
+    "delivery_rate": 1.9316021994088295
+  },
+  {
+    "mean_error": 0.2666,
+    "n": 5475,
+    "delivery_rate": 1.8490327597939147
+  },
+  {
+    "mean_error": 0.2773,
+    "n": 5378,
+    "delivery_rate": 1.8101935230361177
+  },
+  {
+    "mean_error": 0.2443,
+    "n": 5471,
+    "delivery_rate": 1.923310420146473
+  },
+  {
+    "mean_error": 0.2636,
+    "n": 5480,
+    "delivery_rate": 1.8977473285627187
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "total_failed": 0,
+  "by_arm": {
+    "single_low_pd": [],
+    "single_high_pfa": [],
+    "single_high_dropout": [],
+    "single_high_latency": [],
+    "combined_all_faults": []
+  }
+}

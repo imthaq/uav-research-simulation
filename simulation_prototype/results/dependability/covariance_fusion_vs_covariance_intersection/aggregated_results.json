@@ -1,0 +1,14 @@
+{
+  "covariance_weighted": {
+    "mean": 1.80715,
+    "stdev": 0.20105547189215656,
+    "n": 10
+  },
+  "covariance_intersection": {
+    "mean": 2.42913,
+    "stdev": 0.14494344529275321,
+    "n": 10
+  },
+  "verdict": "covariance_weighted performed better on this metric (1.80715 vs 2.42913)",
+  "metric": "nearest-true-object fused position error, meters"
+}

@@ -1,0 +1,21 @@
+{
+  "sim": {
+    "dt": 0.2,
+    "max_steps": 600,
+    "duration_seconds": 120.0,
+    "seed": 42,
+    "fusion_update_rate": 5.0
+  },
+  "scenarios_used": {
+    "high_packet_loss": {
+      "description": "Communication test: 40% packet loss, 10% corruption, 1-step hop delay.",
+      "false_negative_rate": 0.2,
+      "position_noise_std": 1.5,
+      "confidence_error_level": 0.15,
+      "fusion_mode": "trust_weighted_fusion",
+      "communication": {
+        "preset": "high_packet_loss"
+      }
+    }
+  }
+}

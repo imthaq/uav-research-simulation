@@ -1,0 +1,6 @@
+{
+  "status": "NOT IMPLEMENTED - stub only",
+  "reason": "\"Handoff\" (transferring track responsibility/custody for a target\nbetween UAVs, e.g. as one leaves sensor range and another enters it)\ndoes not exist anywhere in this codebase - not as a scenario config\nkey, not as a function, not as a concept mentioned in any module\ndocstring. Implementing it would mean designing and building a new\nfeature, not comparing two existing configurations, so it's left as\na documented placeholder rather than faked.",
+  "proposed_definition_for_review": "A UAV whose track on a target is about to go stale (target leaving its radar_max_range/FOV, or its own dropout/latency degrading past a threshold) explicitly transfers track custody - last known state, covariance, id - to a UAV better positioned to continue it, rather than letting the track lapse and be re-acquired from scratch. 'No handoff' = current behavior (tracks lapse and are re-initialized independently per radar, exactly what tracking/radar_track_model.py's per-radar RadarTracker does today). 'Handoff' would need: (1) a trigger condition, (2) a custody-transfer message format over communication_model.py, (3) a receiving-UAV track continuation path instead of RadarTracker spawning a new tentative track.",
+  "next_step": "Confirm this definition (or an alternative) before implementation."
+}
