@@ -492,7 +492,7 @@ class PerceptionHandoffModel:
             if e["event"] == EVENT_RESOLVED:
                 if e["final_outcome"]:
                     outcome_counts[e["final_outcome"]] = outcome_counts.get(e["final_outcome"], 0) + 1
-                if e["duration_steps"] is not None:
+                if e["duration_steps"] is not None and e["final_outcome"] == OUTCOME_RECOVERED:
                     resolved_durations.append(e["duration_steps"])
         return {
             "handoff_episodes_triggered": triggered,

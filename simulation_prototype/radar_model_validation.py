@@ -71,12 +71,15 @@ def make_bare_model(**overrides):
         reference_range=50.0,
         environmental_condition="clear",
         radar_reliability_state="nominal",
+        radar_mode="normal",
+        radar_clutter_confidence_bias=0.0,
     )
     defaults.update(overrides)
     for k, v in defaults.items():
         setattr(m, k, v)
     m._env_factors = RadarLikeModel.ENV_FACTORS[m.environmental_condition]
     m._reliability_factors = RadarLikeModel.RELIABILITY_FACTORS[m.radar_reliability_state]
+    m._mode_factors = RadarLikeModel.RADAR_MODES[m.radar_mode]
     import random
     m.radar_rng = random.Random(12345)
     m._clutter_counter = 0

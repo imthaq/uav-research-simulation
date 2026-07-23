@@ -1,0 +1,139 @@
+{
+  "total": 17,
+  "passed": 17,
+  "failed": 0,
+  "by_task": {
+    "disagreement_decreases_trust": {
+      "passed": 2,
+      "total": 2
+    },
+    "dropout_decreases_trust": {
+      "passed": 2,
+      "total": 2
+    },
+    "staleness_decreases_trust": {
+      "passed": 2,
+      "total": 2
+    },
+    "trust_never_negative": {
+      "passed": 2,
+      "total": 2
+    },
+    "trust_never_exceeds_max": {
+      "passed": 2,
+      "total": 2
+    },
+    "trust_gradually_recovers": {
+      "passed": 4,
+      "total": 4
+    },
+    "one_good_update_insufficient": {
+      "passed": 3,
+      "total": 3
+    }
+  },
+  "checks": [
+    {
+      "task": "disagreement_decreases_trust",
+      "description": "trust strictly decreases every step under repeated hard disagreement",
+      "passed": true,
+      "detail": "history=[1.0, 0.9385365853658537, 0.8955121951219512, 0.8653951219512195, 0.8443131707317073, 0.8295558048780488, 0.8192256487804879]"
+    },
+    {
+      "task": "disagreement_decreases_trust",
+      "description": "trust after repeated disagreement drops well below the initial value",
+      "passed": true,
+      "detail": "final=0.8192"
+    },
+    {
+      "task": "dropout_decreases_trust",
+      "description": "trust strictly decreases every step under repeated dropout",
+      "passed": true,
+      "detail": "history=[1.0, 0.9145365853658537, 0.8547121951219512, 0.8128351219512194, 0.7835211707317072, 0.7630014048780487, 0.7486375687804877]"
+    },
+    {
+      "task": "dropout_decreases_trust",
+      "description": "repeated dropout leaves trust lower than an otherwise-identical no-dropout run",
+      "passed": true,
+      "detail": "dropout=0.7486 vs no_dropout=0.9251"
+    },
+    {
+      "task": "staleness_decreases_trust",
+      "description": "trust strictly decreases every step under repeated staleness",
+      "passed": true,
+      "detail": "history=[1.0, 0.932183644189383, 0.8847121951219512, 0.8514821807747489, 0.8282211707317073, 0.8119384637015782, 0.8005405687804878]"
+    },
+    {
+      "task": "staleness_decreases_trust",
+      "description": "repeated staleness leaves trust lower than an otherwise-identical fresh-data run",
+      "passed": true,
+      "detail": "stale=0.8005 vs fresh=0.9251"
+    },
+    {
+      "task": "trust_never_negative",
+      "description": "trust never drops below 0 even under sustained worst-case signals for 200 steps",
+      "passed": true,
+      "detail": "final=0.0500"
+    },
+    {
+      "task": "trust_never_negative",
+      "description": "trust floors exactly at TRUST_MIN under sustained worst-case signals",
+      "passed": true,
+      "detail": "final=0.0500, TRUST_MIN=0.05"
+    },
+    {
+      "task": "trust_never_exceeds_max",
+      "description": "trust never exceeds TRUST_MAX (1.0) even under sustained best-case signals",
+      "passed": true,
+      "detail": "max seen=1.0000"
+    },
+    {
+      "task": "trust_never_exceeds_max",
+      "description": "trust starts at TRUST_INITIAL (already at the max) and simply stays there",
+      "passed": true,
+      "detail": "initial=1.0"
+    },
+    {
+      "task": "trust_gradually_recovers",
+      "description": "trust was successfully driven below its initial value before testing recovery",
+      "passed": true,
+      "detail": "depressed=0.8069"
+    },
+    {
+      "task": "trust_gradually_recovers",
+      "description": "trust rises monotonically once good signals resume",
+      "passed": true,
+      "detail": "history=[0.8069, 0.822, 0.8358, 0.8486, 0.8603, 0.8711, 0.881, 0.8901, 0.8985, 0.9063, 0.9134]"
+    },
+    {
+      "task": "trust_gradually_recovers",
+      "description": "trust is still below max after 10 good steps (recovery is gradual, not instant)",
+      "passed": true,
+      "detail": "after 10 good steps=0.9134"
+    },
+    {
+      "task": "trust_gradually_recovers",
+      "description": "recovery takes multiple steps to make meaningful progress back up (not a 1-step jump)",
+      "passed": true,
+      "detail": "first-step gain=0.0151, total gap=0.1931"
+    },
+    {
+      "task": "one_good_update_insufficient",
+      "description": "a single perfect update after being depressed does not restore trust to TRUST_MAX",
+      "passed": true,
+      "detail": "after one good update=0.8220"
+    },
+    {
+      "task": "one_good_update_insufficient",
+      "description": "a single perfect update moves trust up, but only by the slow alpha_up step",
+      "passed": true,
+      "detail": "depressed=0.8069 -> after_one_good_update=0.8220"
+    },
+    {
+      "task": "one_good_update_insufficient",
+      "description": "the single-step gain matches alpha_up*(target-current) (asymmetric EWMA, slow climb)",
+      "passed": true,
+      "detail": "observed gain=0.0151, expected~=0.0151"
+    }
+  ]
+}
