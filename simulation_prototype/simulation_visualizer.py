@@ -15,7 +15,28 @@ Task 22 overlay additions on top of the original radar-only overlay:
   - fused track marker (centralized and per-UAV distributed estimates)
   - inter-UAV communication links, with packet-dropout indication
   - centralized/distributed fusion architecture labeling
+
+Task 26 overlay additions:
+  - radar operating mode (normal/long_range/high_resolution/degraded/...)
+  - calibrated confidence indicator (green=correct, red=false-alarm)
+  - perception-quality state and critical action taken
+  - adaptive safety margin value and mode
+  - abstention status flag
+  - handoff success/failure indicator
+  - ghost radar returns (multipath, side-lobe, duplicate) with type label
+  - Doppler ambiguity flag on radial-velocity label
+  - cross-modal registration offset (from scenario config)
+  - degraded sensor / reliability state label
+  - recovery state (degraded/critical mode steps)
+  - centralized/distributed fusion state (enhanced: per-step architecture)
 """
+
+# Task 26 note: all new overlay fields are read from existing log columns
+# (ghost_flag, doppler_ambiguity_flag, radar_operating_mode, confidence_correct,
+# safety_margin_applied, abstention_flag, handoff_*_flag, degraded_mode_flag,
+# critical_mode_flag, recovery_time_steps, radar_reliability_state).
+# Registration offset is read from the scenario config's
+# cross_modal_registration block, not from individual detection rows.
 
 import copy
 import csv
@@ -301,7 +322,8 @@ class SimulationVisualizer:
                  vision_data: Optional["AuxSensorData"] = None,
                  lidar_data: Optional["AuxSensorData"] = None,
                  fused_data: Optional["FusedTrackData"] = None,
-                 show_covariance: bool = True, show_track_history: bool = True):
+                 show_covariance: bool = True, show_track_history: bool = True,
+                 scenario_config: Optional[Dict] = None):
         self.data = data
         self.figsize = figsize
         self.current_step = 0
@@ -324,6 +346,9 @@ class SimulationVisualizer:
 
         self.show_covariance = show_covariance
         self.show_track_history = show_track_history
+        # Task 26: optional per-scenario config dict (scenario sub-dict,
+        # not the full config) for registration offset display.
+        self._scenario_config = scenario_config
 
         # Setup figure (or reuse one provided by a multi-panel caller)
         if fig is not None and ax is not None:
@@ -561,6 +586,58 @@ Error: {error_type}
 Fusion: {fusion_mode}"""
         if radar_error is not None:
             info_text += f"\nRadar error: {radar_error}"
+
+        # Task 26: radar operating mode, degraded-sensor / reliability state.
+        if self.radar_data is not None:
+            radar_mode_s = self._radar_mode_summary(step)
+            if radar_mode_s:
+                info_text += f"\nRadar: {radar_mode_s}"
+
+        # Task 26: perception-quality state and critical action taken.
+        quality_action = info_row.get("quality_action_taken")
+        if quality_action and quality_action not in (None, "", "None"):
+            info_text += f"\nQuality action: {quality_action}"
+
+        # Task 26: adaptive safety margin.
+        sm_mode = info_row.get("safety_margin_mode", "")
+        sm_val = info_row.get("safety_margin_applied")
+        if sm_val not in (None, ""):
+            try:
+                info_text += f"\nSafety margin [{sm_mode}]: {float(sm_val):.2f}"
+            except (TypeError, ValueError):
+                pass
+
+        # Task 26: abstention status.
+        if info_row.get("abstention_flag") in ("True", True):
+            abstention_kind = ("correct" if info_row.get("correct_abstention_flag") in ("True", True)
+                               else "unnecessary" if info_row.get("unnecessary_abstention_flag") in ("True", True)
+                               else "abstained")
+            info_text += f"\nAbstention: {abstention_kind}"
+
+        # Task 26: handoff source/destination from handoff flags.
+        if info_row.get("handoff_success_flag") in ("True", True):
+            info_text += "\nHandoff: SUCCESS"
+        elif info_row.get("handoff_failure_flag") in ("True", True):
+            info_text += "\nHandoff: FAILED"
+
+        # Task 26: recovery state.
+        if info_row.get("critical_mode_flag") in ("True", True):
+            info_text += "\nMode: CRITICAL"
+        elif info_row.get("degraded_mode_flag") in ("True", True):
+            info_text += "\nMode: DEGRADED"
+        rec = info_row.get("recovery_time_steps")
+        if rec not in (None, "", "None") and str(rec) != "None":
+            try:
+                info_text += f"\nRecovery: {int(float(rec))}step(s)"
+            except (TypeError, ValueError):
+                pass
+
+        # Task 26: cross-modal registration offset (read from config; not in
+        # per-step rows since it's a static scenario property).
+        reg_s = self._registration_summary()
+        if reg_s:
+            info_text += f"\nRegistration: {reg_s}"
+
         if self.fused_data is not None:
             arch_summary = self._fusion_architecture_summary(step)
             if arch_summary:
@@ -614,6 +691,20 @@ Fusion: {fusion_mode}"""
         # This step's raw radar detections for this UAV.
         for d in self.radar_data.detections.get((step, uav_id), []):
             status = d.get("detection_status")
+            # Task 26: ghost returns — drawn as a hollow triangle ("v") in
+            # orange, distinct from clutter ("^") and real detections ("x").
+            if d.get("ghost_flag") in ("True", True):
+                dx, dy = float(d["detected_x"]), float(d["detected_y"])
+                (pt,) = self.ax.plot(dx, dy, "v", color="darkorange", markersize=7,
+                                      alpha=0.85, markeredgecolor="saddlebrown",
+                                      markeredgewidth=0.8)
+                self.radar_artists.append(pt)
+                ghost_type = d.get("ghost_type", "ghost")
+                lbl = self.ax.text(dx + 0.6, dy + 0.6, f"ghost:{ghost_type[:4]}",
+                                    fontsize=6, color="darkorange")
+                self.radar_artists.append(lbl)
+                continue
+
             if status == "detected":
                 dx, dy = float(d["detected_x"]), float(d["detected_y"])
                 (pt,) = self.ax.plot(dx, dy, "x", color=color, markersize=6,
@@ -621,8 +712,24 @@ Fusion: {fusion_mode}"""
                 self.radar_artists.append(pt)
                 conf = d.get("confidence_score")
                 if conf not in (None, ""):
-                    lbl = self.ax.text(dx + 0.6, dy + 0.6, f"R:{float(conf):.2f}",
-                                        fontsize=6, color=color)
+                    # Task 26: calibrated confidence — color the label green
+                    # when confidence_correct=True (genuine target), red when
+                    # False (false alarm that reported high confidence), or
+                    # the UAV's own color when unknown (field absent).
+                    cal = d.get("confidence_correct")
+                    if cal in ("True", True):
+                        lbl_color = "limegreen"
+                    elif cal in ("False", False):
+                        lbl_color = "red"
+                    else:
+                        lbl_color = color
+                    # Task 26: Doppler ambiguity — append "!dop" to the
+                    # confidence label so the reader can see which detections
+                    # had an aliased radial-velocity measurement.
+                    dop_s = "!dop" if d.get("doppler_ambiguity_flag") in ("True", True) else ""
+                    lbl = self.ax.text(dx + 0.6, dy + 0.6,
+                                        f"R:{float(conf):.2f}{dop_s}",
+                                        fontsize=6, color=lbl_color)
                     self.radar_artists.append(lbl)
             elif status == "false_alarm":
                 dx, dy = float(d["detected_x"]), float(d["detected_y"])
@@ -894,9 +1001,8 @@ Fusion: {fusion_mode}"""
 
     def _radar_error_summary(self, step: int) -> str:
         """Aggregates this step's radar-level error flags (dropout, false
-        alarm, clutter, missed, P_D miss) across every UAV's detections
-        into one short string for the info box - the radar-specific
-        counterpart to the existing perception_error_type column."""
+        alarm, clutter, missed, P_D miss, ghost, Doppler ambiguity) across
+        every UAV's detections into one short string for the info box."""
         flags = set()
         for uav_id in range(self.data.num_uavs):
             for d in self.radar_data.detections.get((step, uav_id), []):
@@ -908,7 +1014,58 @@ Fusion: {fusion_mode}"""
                     flags.add("missed")
                 if d.get("radar_pd_miss_flag") in ("True", True):
                     flags.add("pd_miss")
+                # Task 26: ghost returns and Doppler ambiguity.
+                if d.get("ghost_flag") in ("True", True):
+                    flags.add("ghost")
+                if d.get("doppler_ambiguity_flag") in ("True", True):
+                    flags.add("dop_ambig")
         return "+".join(sorted(flags)) if flags else "none"
+
+    def _radar_mode_summary(self, step: int) -> str:
+        """Task 26: returns a one-line string showing the radar operating
+        mode and reliability state this step, drawn from the first
+        detection row for any UAV that has one. Returns '' if neither
+        field is available (e.g. no radar data)."""
+        for uav_id in range(self.data.num_uavs):
+            dets = self.radar_data.detections.get((step, uav_id), [])
+            for d in dets:
+                mode = d.get("radar_operating_mode", "")
+                rel = d.get("radar_reliability_state", "")
+                env = d.get("radar_environmental_condition", "")
+                parts = [p for p in [mode, rel, env] if p and p not in ("", "nominal", "normal", "clear")]
+                # Always show mode even if it's normal, so the viewer can
+                # confirm which mode is active; suppress nominal/clear/normal
+                # for reliability/env to avoid clutter when everything is OK.
+                return f"{mode or '?'}" + (f" | {'+'.join(parts[1:] if mode else parts)}" if parts[1:] else "")
+        return ""
+
+    def _registration_summary(self) -> str:
+        """Task 26: returns a short string describing the cross-modal
+        registration offset for this scenario, if the visualizer was
+        constructed with a config dict that carries one.
+        ponytail: reads self._scenario_config which is set by
+        SimulationVisualizer.__init__ only when a caller passes
+        scenario_config=; absent in batch mode. The ceiling is that
+        registration drift is not reflected per-step (it's a static
+        config summary), which is acceptable since the overlay's purpose
+        is to remind the viewer that mis-registration is active."""
+        cfg = getattr(self, "_scenario_config", None)
+        if cfg is None:
+            return ""
+        reg = cfg.get("cross_modal_registration", {})
+        if not reg.get("enabled", False):
+            return ""
+        ox = reg.get("radar_to_vision_x_offset", 0.0)
+        oy = reg.get("radar_to_vision_y_offset", 0.0)
+        rot = reg.get("rotation_error_deg", 0.0)
+        offset_m = math.hypot(ox, oy)
+        parts = [f"offset={offset_m:.1f}m"]
+        if rot:
+            parts.append(f"rot={rot:.0f}deg")
+        frame_mis = reg.get("lidar_coordinate_frame_mismatch", "none")
+        if frame_mis and frame_mis != "none":
+            parts.append(frame_mis)
+        return " ".join(parts)
 
     def add_legend(self):
         """Add a legend to the plot."""
@@ -930,6 +1087,10 @@ Fusion: {fusion_mode}"""
                 patches.Patch(facecolor="gray", alpha=0.15, label="Track Covariance (2-sigma)"),
                 Line2D([0], [0], color="gray", alpha=0.4, label="Track History"),
                 Line2D([0], [0], marker="D", color="w", markerfacecolor="crimson", markersize=8, label="Possible False Track"),
+                # Task 26 additions:
+                Line2D([0], [0], marker="v", color="w", markerfacecolor="darkorange", markersize=8, label="Ghost Return (multipath/side-lobe)"),
+                Line2D([0], [0], marker="x", color="limegreen", markersize=8, markeredgewidth=1.5, label="Detection (conf. calibrated, correct)"),
+                Line2D([0], [0], marker="x", color="red", markersize=8, markeredgewidth=1.5, label="Detection (conf. miscalibrated, false alarm)"),
             ]
         if self.vision_data is not None:
             legend_elements.append(
@@ -1382,7 +1543,7 @@ def _run_full_stack(config: dict, scenario_name: str, architecture: str = "centr
     required. Used by generate_advanced_demo_videos below."""
     from models.radar_like_model import RadarLikeModel
     from tracking.radar_track_model import build_tracks
-    from fusion_model import build_fused_log
+    from fusion.fusion_model import build_fused_log
 
     cfg = copy.deepcopy(config)
     if seed is not None:
@@ -1422,6 +1583,44 @@ ADVANCED_DEMOS = [
          architecture="centralized", title="Dynamic Trust Adaptation"),
     dict(name="communication_outage_scenario", scenario="communication_outage",
          architecture="distributed", title="Communication Outage Scenario"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Task 26: Final demo video suite
+# ---------------------------------------------------------------------------
+
+# Each entry describes one single-panel video. Entries that need a scenario
+# config override carry an `override` dict that is deep-merged on top of the
+# named scenario's existing config before the run; this lets us enable ghost
+# detection or Doppler aliasing without adding a dedicated scenario to the
+# config file.
+#
+# Side-by-side videos (calibrated vs overconfident, safety margin comparison,
+# swarm-size comparison) are handled separately in generate_final_demo_videos
+# below using a dedicated panel-list approach, same as the existing
+# centralized-vs-distributed comparison video.
+
+FINAL_DEMOS = [
+    dict(name="radar_ghost_return", scenario="high_clutter",
+         architecture="centralized", title="Ghost Radar Returns (multipath/side-lobe)",
+         override={"ghost_detection_enabled": True, "ghost_probability": 0.35}),
+    dict(name="doppler_ambiguity", scenario="rapidly_moving_obstacle",
+         architecture="centralized", title="Doppler Ambiguity",
+         override={"doppler_aliasing_enabled": True,
+                   "max_unambiguous_radial_velocity": 1.5}),
+    dict(name="cross_modal_registration_failure", scenario="registration_severe_error",
+         architecture="centralized", title="Cross-Modal Registration Failure",
+         override={}),
+    dict(name="abstention_case", scenario="simultaneous_sensor_failures",
+         architecture="centralized", title="Abstention Under Combined Faults",
+         override={}),
+    dict(name="centralized_handoff_case", scenario="communication_outage",
+         architecture="distributed", title="Centralized Handoff Under Comms Outage",
+         override={}),
+    dict(name="combined_fault_recovery", scenario="simultaneous_sensor_failures",
+         architecture="centralized", title="Combined-Fault Recovery",
+         override={"safety_margin_mode": "quality_monitor"}),
 ]
 
 
@@ -1539,6 +1738,219 @@ def generate_advanced_demo_videos(config_path: str = "simulation_config.json",
     return results
 
 
+def generate_final_demo_videos(config_path: str = "simulation_config.json",
+                               media_dir: str = "media", fps: int = 5,
+                               figsize: Tuple[int, int] = (12, 10),
+                               seed: Optional[int] = None) -> Dict[str, bool]:
+    """Task 26: generates the final demo video suite:
+
+    Single-panel videos (FINAL_DEMOS list):
+      - radar_ghost_return: ghost detections from multipath/side-lobe effects
+      - doppler_ambiguity: Doppler velocity aliasing on a fast-moving target
+      - cross_modal_registration_failure: severe radar<->vision mis-registration
+      - abstention_case: UAV abstains under combined sensor faults
+      - centralized_handoff_case: distributed->centralized handoff on comms loss
+      - combined_fault_recovery: quality-monitor safety margin + multi-fault
+
+    Side-by-side comparison videos:
+      - calibrated_vs_overconfident_radar: correctly_calibrated vs
+        severely_overconfident_radar, highlighting the calibrated-confidence
+        overlay difference.
+      - adaptive_safety_margin_comparison: safety_margin_fixed vs
+        safety_margin_quality_monitor, highlighting margin value differences.
+      - swarm_size_comparison: baseline scenario run with 3, 5, and 8 UAVs
+        (num_uavs overridden in config) to show scaling behavior.
+
+    Every video uses the Task 26 overlays (ghost, Doppler, calibration color,
+    safety margin, mode, registration) automatically via SimulationVisualizer.
+    Scenario config overrides (FINAL_DEMOS[*]["override"]) let us enable ghost
+    detection / Doppler aliasing without polluting the config file."""
+    with open(config_path) as f:
+        config = json.load(f)
+    os.makedirs(media_dir, exist_ok=True)
+    scenario_names = set(config["scenarios"].keys())
+
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    if not ffmpeg_ok:
+        print("NOTE: ffmpeg not found on PATH - final demo videos will be skipped.")
+
+    results: Dict[str, bool] = {}
+
+    # ---- Single-panel demos (same shape as ADVANCED_DEMOS) ----
+    for demo in FINAL_DEMOS:
+        name, scenario = demo["name"], demo["scenario"]
+        override = demo.get("override", {})
+        architecture = demo.get("architecture", "centralized")
+
+        if scenario not in scenario_names:
+            print(f"SKIP {name}: scenario '{scenario}' not found in {config_path}")
+            results[name] = False
+            continue
+
+        print(f"{name}: running '{scenario}' [{architecture}] ...")
+        try:
+            # Deep-merge override keys into a copy of the scenario config so
+            # the original config dict stays unmodified across iterations.
+            cfg = copy.deepcopy(config)
+            cfg["scenarios"][scenario].update(override)
+            sim_data, radar_data, fused_data, radar_model = _run_full_stack(
+                cfg, scenario, architecture=architecture, seed=seed)
+        except Exception as e:
+            print(f"  FAILED to build data for {name}: {e}")
+            results[name] = False
+            continue
+
+        sim_data.scenario_name = demo["title"]
+
+        if not ffmpeg_ok:
+            results[name] = False
+            continue
+
+        scn_cfg = config["scenarios"].get(scenario, {})
+        viz = SimulationVisualizer(
+            sim_data, figsize=figsize, radar_data=radar_data,
+            radar_range=radar_model.radar_max_range,
+            radar_fov_deg=radar_model.radar_field_of_view,
+            fused_data=fused_data,
+            scenario_config=scn_cfg)  # Task 26: registration overlay
+        out_path = os.path.join(media_dir, f"{name}.mp4")
+        try:
+            viz.save_animation(out_path, fps=fps, dpi=100)
+            results[name] = True
+        except Exception as e:
+            print(f"  video save failed for {name}: {e}")
+            results[name] = False
+
+    # ---- calibrated vs overconfident radar (side-by-side) ----
+    _comparison_panels = [
+        ("correctly_calibrated_radar", "Calibrated Radar"),
+        ("severely_overconfident_radar", "Severely Overconfident Radar"),
+    ]
+    _comparison_panels = [(s, t) for s, t in _comparison_panels if s in scenario_names]
+    if len(_comparison_panels) >= 2 and ffmpeg_ok:
+        print("calibrated_vs_overconfident_radar: building comparison ...")
+        try:
+            panels = []
+            for scn, title in _comparison_panels:
+                sd, rd, fd, rm = _run_full_stack(config, scn, architecture="centralized", seed=seed)
+                sd.scenario_name = title
+                panels.append((scn, sd, rd, fd, rm))
+            fig, axes = plt.subplots(1, len(panels), figsize=(6.5 * len(panels), 6.5))
+            if len(panels) == 1:
+                axes = [axes]
+            vizs = [SimulationVisualizer(sd, fig=fig, ax=ax, radar_data=rd,
+                                          radar_range=rm.radar_max_range,
+                                          radar_fov_deg=rm.radar_field_of_view,
+                                          fused_data=fd)
+                    for ax, (scn, sd, rd, fd, rm) in zip(axes, panels)]
+            max_steps = max(v.data.steps for v in vizs)
+            anim = animation.FuncAnimation(
+                fig, lambda fr: [v.render_step(min(fr, v.data.steps - 1)) for v in vizs],
+                frames=max_steps, interval=1000 // fps, repeat=True)
+            fig.suptitle("Calibrated vs Overconfident Radar", fontsize=14, fontweight="bold")
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+            out = os.path.join(media_dir, "calibrated_vs_overconfident_radar.mp4")
+            anim.save(out, writer=animation.FFMpegWriter(fps=fps), dpi=100)
+            plt.close(fig)
+            results["calibrated_vs_overconfident_radar"] = True
+            print(f"  saved {out}")
+        except Exception as e:
+            print(f"  FAILED calibrated_vs_overconfident_radar: {e}")
+            results["calibrated_vs_overconfident_radar"] = False
+    else:
+        results["calibrated_vs_overconfident_radar"] = False
+
+    # ---- adaptive safety-margin comparison (side-by-side) ----
+    _margin_panels = [
+        ("safety_margin_fixed", "Fixed Safety Margin"),
+        ("safety_margin_quality_monitor", "Quality-Monitor Margin"),
+    ]
+    _margin_panels = [(s, t) for s, t in _margin_panels if s in scenario_names]
+    if len(_margin_panels) >= 2 and ffmpeg_ok:
+        print("adaptive_safety_margin_comparison: building comparison ...")
+        try:
+            panels = []
+            for scn, title in _margin_panels:
+                sd, rd, fd, rm = _run_full_stack(config, scn, architecture="centralized", seed=seed)
+                sd.scenario_name = title
+                panels.append((scn, sd, rd, fd, rm))
+            fig, axes = plt.subplots(1, len(panels), figsize=(6.5 * len(panels), 6.5))
+            if len(panels) == 1:
+                axes = [axes]
+            vizs = [SimulationVisualizer(sd, fig=fig, ax=ax, radar_data=rd,
+                                          radar_range=rm.radar_max_range,
+                                          radar_fov_deg=rm.radar_field_of_view,
+                                          fused_data=fd,
+                                          scenario_config=config["scenarios"].get(scn, {}))
+                    for ax, (scn, sd, rd, fd, rm) in zip(axes, panels)]
+            max_steps = max(v.data.steps for v in vizs)
+            anim = animation.FuncAnimation(
+                fig, lambda fr: [v.render_step(min(fr, v.data.steps - 1)) for v in vizs],
+                frames=max_steps, interval=1000 // fps, repeat=True)
+            fig.suptitle("Adaptive Safety-Margin Comparison", fontsize=14, fontweight="bold")
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+            out = os.path.join(media_dir, "adaptive_safety_margin_comparison.mp4")
+            anim.save(out, writer=animation.FFMpegWriter(fps=fps), dpi=100)
+            plt.close(fig)
+            results["adaptive_safety_margin_comparison"] = True
+            print(f"  saved {out}")
+        except Exception as e:
+            print(f"  FAILED adaptive_safety_margin_comparison: {e}")
+            results["adaptive_safety_margin_comparison"] = False
+    else:
+        results["adaptive_safety_margin_comparison"] = False
+
+    # ---- swarm-size comparison (3 / 5 / 8 UAVs, side-by-side) ----
+    # ponytail: swarm_sizes is hardcoded to three representative sizes.
+    # Upgrade path: make it a parameter if a sweep over more sizes is needed.
+    swarm_sizes = [3, 5, 8]
+    base_scn = "baseline"
+    if base_scn in scenario_names and ffmpeg_ok:
+        print("swarm_size_comparison: building 3-panel comparison ...")
+        try:
+            panels = []
+            for n in swarm_sizes:
+                cfg = copy.deepcopy(config)
+                cfg["swarm"]["num_uavs"] = n
+                # Ensure we have enough start positions (pad with offsets if needed)
+                while len(cfg["swarm"]["start_positions"]) < n:
+                    last = cfg["swarm"]["start_positions"][-1]
+                    cfg["swarm"]["start_positions"].append(
+                        [last[0] + 5.0, last[1]])
+                cfg["swarm"]["start_positions"] = cfg["swarm"]["start_positions"][:n]
+                sd, rd, fd, rm = _run_full_stack(cfg, base_scn, architecture="centralized", seed=seed)
+                sd.scenario_name = f"Baseline ({n} UAVs)"
+                panels.append((n, sd, rd, fd, rm))
+            fig, axes = plt.subplots(1, len(panels), figsize=(6.0 * len(panels), 6.5))
+            if len(panels) == 1:
+                axes = [axes]
+            vizs = [SimulationVisualizer(sd, fig=fig, ax=ax, radar_data=rd,
+                                          radar_range=rm.radar_max_range,
+                                          radar_fov_deg=rm.radar_field_of_view,
+                                          fused_data=fd)
+                    for ax, (n, sd, rd, fd, rm) in zip(axes, panels)]
+            max_steps = max(v.data.steps for v in vizs)
+            anim = animation.FuncAnimation(
+                fig, lambda fr: [v.render_step(min(fr, v.data.steps - 1)) for v in vizs],
+                frames=max_steps, interval=1000 // fps, repeat=True)
+            fig.suptitle("Swarm-Size Comparison", fontsize=14, fontweight="bold")
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+            out = os.path.join(media_dir, "swarm_size_comparison.mp4")
+            anim.save(out, writer=animation.FFMpegWriter(fps=fps), dpi=100)
+            plt.close(fig)
+            results["swarm_size_comparison"] = True
+            print(f"  saved {out}")
+        except Exception as e:
+            print(f"  FAILED swarm_size_comparison: {e}")
+            results["swarm_size_comparison"] = False
+    else:
+        results["swarm_size_comparison"] = False
+
+    success = sum(1 for v in results.values() if v)
+    print(f"\nFinal demo videos: {success}/{len(results)} saved to {media_dir}/")
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Visualize UAV swarm simulation from CSV logs. "
@@ -1642,6 +2054,14 @@ def main():
         "and exit. Builds everything in memory - no logs need to exist yet.",
     )
     parser.add_argument(
+        "--final-demos", action="store_true",
+        help="Task 26: generate the final demo video suite (calibrated vs "
+        "overconfident radar, ghost-return, Doppler ambiguity, registration "
+        "failure, adaptive safety margin, abstention, centralized handoff, "
+        "combined-fault recovery, swarm-size comparison) into --media-dir "
+        "and exit. Builds everything in memory - no logs need to exist yet.",
+    )
+    parser.add_argument(
         "--scenario", default=None,
         help="'live' mode only: which scenario from --config to actually run "
         "and watch live. Omit to run every scenario in --config live, one "
@@ -1663,6 +2083,10 @@ def main():
 
     if args.advanced_demos:
         generate_advanced_demo_videos(args.config, args.media_dir, args.fps, tuple(args.figsize))
+        return 0
+
+    if args.final_demos:
+        generate_final_demo_videos(args.config, args.media_dir, args.fps, tuple(args.figsize))
         return 0
 
     if args.fusion_comparison:
