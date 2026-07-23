@@ -45,7 +45,7 @@ from run_final_simulations import (
 )
 from experiments.run_experiments import write_metadata
 
-DEMO_SCENARIOS = ["baseline", "naive_fusion", "high_dropout", "communication_outage"]
+DEMO_SCENARIOS = ["baseline", "naive_fusion", "high_dropout", "communication_outage", "simultaneous_sensor_failures"]
 DEMO_TRIALS_DEFAULT = 3
 
 
