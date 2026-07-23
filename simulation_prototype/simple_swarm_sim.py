@@ -362,6 +362,23 @@ class Simulation:
         self.regroup_count = 0
         self.request_fresh_observation_count = 0
 
+        # Task 24: Dependability metrics tracking
+        self.abstention_count = 0
+        self.correct_abstention_count = 0
+        self.unnecessary_abstention_count = 0
+        self.handoff_success_count = 0
+        self.handoff_failure_count = 0
+        self.recovery_time_samples = []
+        self.degraded_mode_steps = 0
+        self.critical_mode_steps = 0
+        self.safety_margin_increases = []
+
+        # Task 24: Radar-specific metrics tracking
+        self.ghost_track_count = 0
+        self.extended_target_fragmentation_count = 0
+        self.doppler_ambiguity_count = 0
+        self.multipath_false_track_count = 0
+
         self.perception = [Perception(self.scn, self.rng, self.sensor_range)
                             for _ in range(self.num_uavs)]
         self.reached_goal = [False] * self.num_uavs
@@ -1057,6 +1074,11 @@ class Simulation:
                                 if self.formation_error_samples else None)
         avg_confidence_error = (sum(self.confidence_error_samples) / len(self.confidence_error_samples)
                                  if self.confidence_error_samples else None)
+        avg_recovery_time = (sum(self.recovery_time_samples) / len(self.recovery_time_samples)
+                             if self.recovery_time_samples else None)
+        avg_safety_margin_increase = (sum(self.safety_margin_increases) / len(self.safety_margin_increases)
+                                      if self.safety_margin_increases else None)
+
         return {
             "scenario": self.scenario_name,
             "fusion_mode": self.fusion_mode,
@@ -1079,6 +1101,23 @@ class Simulation:
             "hold_count": self.hold_count,
             "regroup_count": self.regroup_count,
             "request_fresh_observation_count": self.request_fresh_observation_count,
+
+            # Task 24: Dependability metrics
+            "abstention_count": self.abstention_count,
+            "correct_abstention_count": self.correct_abstention_count,
+            "unnecessary_abstention_count": self.unnecessary_abstention_count,
+            "handoff_success_count": self.handoff_success_count,
+            "handoff_failure_count": self.handoff_failure_count,
+            "mean_recovery_time_steps": round(avg_recovery_time, 3) if avg_recovery_time is not None else None,
+            "time_in_degraded_mode": self.degraded_mode_steps,
+            "time_in_critical_mode": self.critical_mode_steps,
+            "mean_safety_margin_increase": round(avg_safety_margin_increase, 4) if avg_safety_margin_increase is not None else None,
+
+            # Task 24: Radar-specific metrics
+            "ghost_track_count": self.ghost_track_count,
+            "extended_target_fragmentation": self.extended_target_fragmentation_count,
+            "doppler_ambiguity_count": self.doppler_ambiguity_count,
+            "multipath_false_track_count": self.multipath_false_track_count,
         }
 
 
@@ -1308,6 +1347,28 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
                 "safety_margin_mode": log_row["safety_margin_mode"],
                 "safety_margin_applied": log_row["safety_margin_applied"],
                 "quality_action_taken": log_row["quality_action_taken"],
+
+                # Task 24: Dependability metrics
+                "abstention_flag": log_row.get("abstention_flag", False),
+                "correct_abstention_flag": log_row.get("correct_abstention_flag", False),
+                "unnecessary_abstention_flag": log_row.get("unnecessary_abstention_flag", False),
+                "handoff_success_flag": log_row.get("handoff_success_flag", False),
+                "handoff_failure_flag": log_row.get("handoff_failure_flag", False),
+                "recovery_time_steps": log_row.get("recovery_time_steps"),
+                "degraded_mode_flag": log_row.get("degraded_mode_flag", False),
+                "critical_mode_flag": log_row.get("critical_mode_flag", False),
+                "safety_margin_increase": log_row.get("safety_margin_increase"),
+
+                # Task 24: Radar-specific metrics
+                "ghost_track_flag": log_row.get("ghost_track_flag", False),
+                "extended_target_fragmentation_flag": log_row.get("extended_target_fragmentation_flag", False),
+                "doppler_ambiguity_flag": log_row.get("doppler_ambiguity_flag", False),
+                "multipath_false_track_flag": log_row.get("multipath_false_track_flag", False),
+
+                # Detection status for calibration metrics
+                "detection_status": log_row.get("detection_status"),
+                "probability_of_detection": log_row.get("probability_of_detection"),
+                "radar_pd_miss_flag": log_row.get("radar_pd_miss_flag", False),
             })
 
     metrics = sim._metrics(t)

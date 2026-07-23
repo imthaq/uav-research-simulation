@@ -117,6 +117,48 @@ def communication_metrics(rows):
     }
 
 
+def dependability_metrics(rows):
+    """Dependability metrics: abstention, handoff, recovery, and degraded/critical mode durations."""
+    abstention_flags = [r.get("abstention_flag") for r in rows if r.get("abstention_flag") is not None]
+    correct_abstention = [r.get("correct_abstention_flag") for r in rows if r.get("correct_abstention_flag") is not None]
+    unnecessary_abstention = [r.get("unnecessary_abstention_flag") for r in rows if r.get("unnecessary_abstention_flag") is not None]
+    
+    handoff_success = [r.get("handoff_success_flag") for r in rows if r.get("handoff_success_flag") is not None]
+    handoff_failure = [r.get("handoff_failure_flag") for r in rows if r.get("handoff_failure_flag") is not None]
+    recovery_times = [r.get("recovery_time_steps") for r in rows if r.get("recovery_time_steps") is not None]
+    
+    degraded_mode_flags = [r.get("degraded_mode_flag") for r in rows if r.get("degraded_mode_flag") is not None]
+    critical_mode_flags = [r.get("critical_mode_flag") for r in rows if r.get("critical_mode_flag") is not None]
+    safety_margin_increase = [r.get("safety_margin_increase") for r in rows if r.get("safety_margin_increase") is not None]
+    
+    return {
+        "abstention_rate": round(sum(abstention_flags) / len(abstention_flags), 4) if abstention_flags else None,
+        "correct_abstention_rate": round(sum(correct_abstention) / len(correct_abstention), 4) if correct_abstention else None,
+        "unnecessary_abstention_rate": round(sum(unnecessary_abstention) / len(unnecessary_abstention), 4) if unnecessary_abstention else None,
+        "handoff_success_rate": round(sum(handoff_success) / len(handoff_success), 4) if handoff_success else None,
+        "handoff_failure_rate": round(sum(handoff_failure) / len(handoff_failure), 4) if handoff_failure else None,
+        "mean_recovery_time_steps": _mean(recovery_times),
+        "time_in_degraded_mode": sum(degraded_mode_flags) if degraded_mode_flags else 0,
+        "time_in_critical_mode": sum(critical_mode_flags) if critical_mode_flags else 0,
+        "mean_safety_margin_increase": _mean(safety_margin_increase),
+    }
+
+
+def radar_specific_metrics(rows):
+    """Radar-specific metrics: ghost tracks, extended-target fragmentation, Doppler ambiguity, multipath false tracks."""
+    ghost_track_count = sum(1 for r in rows if r.get("ghost_track_flag"))
+    extended_target_fragmentation = sum(1 for r in rows if r.get("extended_target_fragmentation_flag"))
+    doppler_ambiguity_count = sum(1 for r in rows if r.get("doppler_ambiguity_flag"))
+    multipath_false_track_count = sum(1 for r in rows if r.get("multipath_false_track_flag"))
+    
+    return {
+        "ghost_track_count": ghost_track_count,
+        "extended_target_fragmentation": extended_target_fragmentation,
+        "doppler_ambiguity_count": doppler_ambiguity_count,
+        "multipath_false_track_count": multipath_false_track_count,
+    }
+
+
 def _calibration_pairs(rows):
     """Extracts (probability_of_detection, detected) pairs for confidence-
     calibration analysis - see radar_like_model.calibration_pairs, which
@@ -284,6 +326,13 @@ def run_once(config, scenario_name, seed):
         "underconfidence_rate": calibration["underconfidence_rate"],
         "calibration_n_samples": calibration["n_samples"],
     })
+    
+    dependability = dependability_metrics(rows)
+    out.update(dependability)
+    
+    radar_specific = radar_specific_metrics(rows)
+    out.update(radar_specific)
+    
     return out
 
 
@@ -305,6 +354,15 @@ CALIBRATION_FIELDS = [
     "expected_calibration_error", "maximum_calibration_error", "brier_score",
     "negative_log_likelihood", "overconfidence_rate", "underconfidence_rate",
     "calibration_n_samples",
+]
+DEPENDABILITY_FIELDS = [
+    "abstention_rate", "correct_abstention_rate", "unnecessary_abstention_rate",
+    "handoff_success_rate", "handoff_failure_rate", "mean_recovery_time_steps",
+    "time_in_degraded_mode", "time_in_critical_mode", "mean_safety_margin_increase",
+]
+RADAR_SPECIFIC_FIELDS = [
+    "ghost_track_count", "extended_target_fragmentation",
+    "doppler_ambiguity_count", "multipath_false_track_count",
 ]
 
 
@@ -332,7 +390,8 @@ def main():
     fieldnames = ([
         "scenario", "run_number", "fusion_mode", "false_positive_rate", "false_negative_rate",
         "noise_level", "latency_steps", "dropout_probability", "confidence_error_level",
-    ] + SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS)
+    ] + SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS
+      + DEPENDABILITY_FIELDS + RADAR_SPECIFIC_FIELDS)
 
     rows = []
     scenario_runs = {}  # scenario_name -> list of per-run metric dicts, for the console summary
@@ -353,7 +412,7 @@ def main():
                 **params,
                 "mission_success": "Yes" if m["mission_success"] else "No",
             }
-            for key in SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS:
+            for key in SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS + DEPENDABILITY_FIELDS + RADAR_SPECIFIC_FIELDS:
                 if key != "mission_success":
                     row[key] = m[key]
             rows.append(row)
