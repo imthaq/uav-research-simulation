@@ -54,82 +54,159 @@ def _run_lengths(flags):
 
 
 def perception_metrics(rows):
-    """RMSE/tracking/association metrics derived from one run's per-step
-    pipeline rows (see simple_swarm_sim.run_radar_track_fusion_pipeline)."""
-    rmse_position = _rmse((r["detected_x"] - r["true_target_x"], r["detected_y"] - r["true_target_y"])
-                           for r in rows if r["detected_x"] is not None)
-    fusion_consistency_error = _rmse((r["fused_x"] - r["true_target_x"], r["fused_y"] - r["true_target_y"])
-                                      for r in rows if r["fused_x"] is not None)
-    velocity_errors = [abs(r["measured_radial_velocity"] - r["true_radial_velocity"])
-                        for r in rows if r["measured_radial_velocity"] is not None and r["true_radial_velocity"] is not None]
-
-    by_uav = {}
-    for r in sorted(rows, key=lambda r: (r["uav_id"], r["time_step"])):
-        by_uav.setdefault(r["uav_id"], []).append(r)
-
+    """RMSE/tracking/association metrics - optimized for large datasets."""
+    # Single pass through all rows to collect diverse metrics
+    rmse_pairs = []
+    fusion_pairs = []
+    velocity_errors = []
+    false_alarms = 0
+    missed_detections = 0
+    association_errors = 0
+    active_count = 0
+    active_good = 0
+    covariance_traces = []
+    
+    by_uav = {}  # Will collect rows by UAV ID without sorting
+    
+    for r in rows:
+        # RMSE position
+        if r.get("detected_x") is not None:
+            rmse_pairs.append((r["detected_x"] - r["true_target_x"], 
+                             r["detected_y"] - r["true_target_y"]))
+        
+        # Fusion consistency
+        if r.get("fused_x") is not None:
+            fusion_pairs.append((r["fused_x"] - r["true_target_x"], 
+                               r["fused_y"] - r["true_target_y"]))
+        
+        # Velocity errors
+        if r.get("measured_radial_velocity") is not None and r.get("true_radial_velocity") is not None:
+            velocity_errors.append(abs(r["measured_radial_velocity"] - r["true_radial_velocity"]))
+        
+        # Covariance
+        if r.get("track_covariance_trace") is not None:
+            covariance_traces.append(r["track_covariance_trace"])
+        
+        # False alarms and missed detections
+        if r.get("false_alarm_flag"):
+            false_alarms += 1
+        if r.get("missed_detection_flag"):
+            missed_detections += 1
+        
+        # Association errors
+        if r.get("clutter_flag") and r.get("track_status") is not None:
+            association_errors += 1
+        
+        # Track continuity
+        if r.get("true_range") is not None:
+            active_count += 1
+            if r.get("track_status") in ("tentative", "confirmed", "coasting"):
+                active_good += 1
+        
+        # Group by UAV (unsorted to avoid expensive sort)
+        uav_id = r.get("uav_id")
+        if uav_id is not None:
+            by_uav.setdefault(uav_id, []).append(r)
+    
+    # Track confirmation and fragmentation analysis
     confirmation_times, fragmentation_count, loss_durations = [], 0, []
     for uav_rows in by_uav.values():
         first_seen, confirmed_at, prev_id = {}, {}, None
         for r in uav_rows:
-            tid = r["radar_track_id"]
+            tid = r.get("radar_track_id")
             if tid is not None:
-                first_seen.setdefault(tid, r["time_step"])
-                if r["track_status"] == "confirmed" and tid not in confirmed_at:
-                    confirmed_at[tid] = r["time_step"]
+                first_seen.setdefault(tid, r.get("time_step"))
+                if r.get("track_status") == "confirmed" and tid not in confirmed_at:
+                    confirmed_at[tid] = r.get("time_step")
                 if prev_id is not None and tid != prev_id:
                     fragmentation_count += 1
             prev_id = tid if tid is not None else prev_id
         confirmation_times.extend(confirmed_at[tid] - first_seen[tid] for tid in confirmed_at)
-        loss_durations.extend(_run_lengths(r["missed_detection_flag"] for r in uav_rows))
-
-    association_errors = sum(1 for r in rows if r["clutter_flag"] and r["track_status"] is not None)
-    active_rows = [r for r in rows if r["true_range"] is not None]
-    continuity = (sum(1 for r in active_rows if r["track_status"] in ("tentative", "confirmed", "coasting"))
-                  / len(active_rows)) if active_rows else None
-
+        loss_durations.extend(_run_lengths(r.get("missed_detection_flag") for r in uav_rows))
+    
+    continuity = (active_good / active_count) if active_count else None
+    
     return {
-        "rmse_position_error": rmse_position,
+        "rmse_position_error": _rmse(rmse_pairs),
         "velocity_estimation_error": _mean(velocity_errors),
         "track_continuity": round(continuity, 4) if continuity is not None else None,
         "track_fragmentation": fragmentation_count,
-        "false_track_count": sum(1 for r in rows if r["false_alarm_flag"]),
-        "missed_track_count": sum(1 for r in rows if r["missed_detection_flag"]),
+        "false_track_count": false_alarms,
+        "missed_track_count": missed_detections,
         "track_confirmation_time_steps": _mean(confirmation_times),
         "track_loss_duration_steps": _mean(loss_durations),
         "association_error_count": association_errors,
-        "average_covariance": _mean(r["track_covariance_trace"] for r in rows),
-        "fusion_consistency_error": fusion_consistency_error,
+        "average_covariance": _mean(covariance_traces),
+        "fusion_consistency_error": _rmse(fusion_pairs),
     }
 
 
 def communication_metrics(rows):
-    sent = [r["fusion_comm_messages"] for r in rows if r["fusion_comm_messages"] is not None]
-    sources = [r["fusion_num_sources"] for r in rows if r["fusion_num_sources"] is not None]
-    delays = [r["fusion_response_time_steps"] for r in rows if r["fusion_response_time_steps"] is not None]
+    """Communication metrics - single pass aggregation."""
+    total_sent = 0
+    sent_list = []
+    sources_list = []
+    delays = []
+    
+    # Single pass through all rows
+    for r in rows:
+        msg_count = r.get("fusion_comm_messages")
+        if msg_count is not None:
+            total_sent += msg_count
+            sent_list.append(msg_count)
+        
+        num_sources = r.get("fusion_num_sources")
+        if num_sources is not None:
+            sources_list.append(num_sources)
+        
+        delay = r.get("fusion_response_time_steps")
+        if delay is not None:
+            delays.append(delay)
+    
     # Every UAV that reported a track is a source that got fused in; the gap
     # between attempted uplinks and used sources approximates drop/staleness.
-    dropped = sum(s - n for s, n in zip(sent, sources))
+    dropped = sum(s - n for s, n in zip(sent_list, sources_list))
+    
     return {
-        "messages_sent": sum(sent),
+        "messages_sent": total_sent,
         "messages_dropped": dropped,
         "avg_message_delay_steps": _mean(delays),
-        "communication_load": _mean(sent),
+        "communication_load": _mean(sent_list),
     }
 
 
 def dependability_metrics(rows):
-    """Dependability metrics: abstention, handoff, recovery, and degraded/critical mode durations."""
-    abstention_flags = [r.get("abstention_flag") for r in rows if r.get("abstention_flag") is not None]
-    correct_abstention = [r.get("correct_abstention_flag") for r in rows if r.get("correct_abstention_flag") is not None]
-    unnecessary_abstention = [r.get("unnecessary_abstention_flag") for r in rows if r.get("unnecessary_abstention_flag") is not None]
+    """Dependability metrics: single-pass aggregation for performance."""
+    abstention_flags = []
+    correct_abstention = []
+    unnecessary_abstention = []
+    handoff_success = []
+    handoff_failure = []
+    recovery_times = []
+    degraded_count = 0
+    critical_count = 0
+    safety_margin_values = []
     
-    handoff_success = [r.get("handoff_success_flag") for r in rows if r.get("handoff_success_flag") is not None]
-    handoff_failure = [r.get("handoff_failure_flag") for r in rows if r.get("handoff_failure_flag") is not None]
-    recovery_times = [r.get("recovery_time_steps") for r in rows if r.get("recovery_time_steps") is not None]
-    
-    degraded_mode_flags = [r.get("degraded_mode_flag") for r in rows if r.get("degraded_mode_flag") is not None]
-    critical_mode_flags = [r.get("critical_mode_flag") for r in rows if r.get("critical_mode_flag") is not None]
-    safety_margin_increase = [r.get("safety_margin_increase") for r in rows if r.get("safety_margin_increase") is not None]
+    # Single pass through all rows
+    for r in rows:
+        if r.get("abstention_flag") is not None:
+            abstention_flags.append(r.get("abstention_flag"))
+        if r.get("correct_abstention_flag") is not None:
+            correct_abstention.append(r.get("correct_abstention_flag"))
+        if r.get("unnecessary_abstention_flag") is not None:
+            unnecessary_abstention.append(r.get("unnecessary_abstention_flag"))
+        if r.get("handoff_success_flag") is not None:
+            handoff_success.append(r.get("handoff_success_flag"))
+        if r.get("handoff_failure_flag") is not None:
+            handoff_failure.append(r.get("handoff_failure_flag"))
+        if r.get("recovery_time_steps") is not None:
+            recovery_times.append(r.get("recovery_time_steps"))
+        if r.get("degraded_mode_flag"):
+            degraded_count += 1
+        if r.get("critical_mode_flag"):
+            critical_count += 1
+        if r.get("safety_margin_increase") is not None:
+            safety_margin_values.append(r.get("safety_margin_increase"))
     
     return {
         "abstention_rate": round(sum(abstention_flags) / len(abstention_flags), 4) if abstention_flags else None,
@@ -138,24 +215,35 @@ def dependability_metrics(rows):
         "handoff_success_rate": round(sum(handoff_success) / len(handoff_success), 4) if handoff_success else None,
         "handoff_failure_rate": round(sum(handoff_failure) / len(handoff_failure), 4) if handoff_failure else None,
         "mean_recovery_time_steps": _mean(recovery_times),
-        "time_in_degraded_mode": sum(degraded_mode_flags) if degraded_mode_flags else 0,
-        "time_in_critical_mode": sum(critical_mode_flags) if critical_mode_flags else 0,
-        "mean_safety_margin_increase": _mean(safety_margin_increase),
+        "time_in_degraded_mode": degraded_count,
+        "time_in_critical_mode": critical_count,
+        "mean_safety_margin_increase": _mean(safety_margin_values),
     }
 
 
 def radar_specific_metrics(rows):
-    """Radar-specific metrics: ghost tracks, extended-target fragmentation, Doppler ambiguity, multipath false tracks."""
-    ghost_track_count = sum(1 for r in rows if r.get("ghost_track_flag"))
-    extended_target_fragmentation = sum(1 for r in rows if r.get("extended_target_fragmentation_flag"))
-    doppler_ambiguity_count = sum(1 for r in rows if r.get("doppler_ambiguity_flag"))
-    multipath_false_track_count = sum(1 for r in rows if r.get("multipath_false_track_flag"))
+    """Radar-specific metrics: single-pass aggregation for performance."""
+    ghost_count = 0
+    fragmentation_count = 0
+    doppler_count = 0
+    multipath_count = 0
+    
+    # Single pass through all rows
+    for r in rows:
+        if r.get("ghost_track_flag"):
+            ghost_count += 1
+        if r.get("extended_target_fragmentation_flag"):
+            fragmentation_count += 1
+        if r.get("doppler_ambiguity_flag"):
+            doppler_count += 1
+        if r.get("multipath_false_track_flag"):
+            multipath_count += 1
     
     return {
-        "ghost_track_count": ghost_track_count,
-        "extended_target_fragmentation": extended_target_fragmentation,
-        "doppler_ambiguity_count": doppler_ambiguity_count,
-        "multipath_false_track_count": multipath_false_track_count,
+        "ghost_track_count": ghost_count,
+        "extended_target_fragmentation": fragmentation_count,
+        "doppler_ambiguity_count": doppler_count,
+        "multipath_false_track_count": multipath_count,
     }
 
 

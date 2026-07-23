@@ -34,6 +34,21 @@ collision risk, are new) saved into plots/final/:
   distributed fusion, fixed vs dynamic trust, confidence intervals for
   main comparisons.
 
+Dependability set - Task 25's 15 final dependability plots, saved into
+plots/dependability/: calibration reliability diagram, calibration
+error vs collision risk, registration error vs fusion RMSE, sensor
+correlation vs covariance consistency, Doppler ambiguity vs response
+error, ghost-return rate vs false-track count, perception quality vs
+safety margin, abstention threshold vs {mission success, mission
+delay}, handoff strategy vs {collision risk, recovery time}, combined
+fault severity vs mission success, swarm size vs {communication load,
+simulation runtime}, and the final failure-envelope heatmap. Several of
+these drive dependability_controllers.py / experiments/failure_envelope.py
+directly (real handoff/abstention closed-loop metrics) rather than
+results_summary.csv; two knobs are substituted for a dead code path -
+see the docstrings on plot_registration_error_vs_fusion_rmse and
+plot_abstention_threshold_vs_mission_outcomes.
+
 Run from the simulation_prototype/ folder:
     python generate_plots.py
 Optional flags:
@@ -42,10 +57,13 @@ Optional flags:
     --config  simulation_config.json        (advanced-set input config)
     --advanced-outdir plots/advanced        (advanced-set output folder)
     --final-outdir plots/final              (final-set output folder)
-    --seeds   4                             (seeds per advanced/final data point)
+    --dependability-outdir plots/dependability  (dependability-set output folder)
+    --seeds   4                             (seeds per advanced/final/dependability data point)
     --skip-advanced                         (skip the exploratory advanced set)
     --skip-final                            (skip the curated final set)
+    --skip-dependability                    (skip the Task 25 dependability set)
     --final-only                            (only the curated final set)
+    --dependability-only                    (only the Task 25 dependability set)
 """
 
 import argparse
@@ -55,10 +73,13 @@ import math
 import os
 import statistics
 import sys
+import time
 
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.colors
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from simple_swarm_sim import Simulation, run_radar_track_fusion_pipeline
@@ -66,7 +87,14 @@ from fusion.fusion_model import (
     build_fused_log, estimation_error_against_ground_truth,
     ARCHITECTURE_CENTRALIZED, ARCHITECTURE_DISTRIBUTED, FUSION_MODES,
 )
-from metrics_analysis import run_once
+from metrics_analysis import run_once, confidence_calibration_metrics
+from models.radar_like_model import RadarLikeModel
+from perception_quality_monitor import PerceptionQualityMonitor
+from dependability_controllers import (
+    attach_dependability_layer, _dependability_metrics, run_any_controller,
+)
+from experiments.failure_envelope import run_stress_pipeline, classify
+from run_final_dependability_experiments import _true_positions_by_step, _nearest_object_error
 
 
 SCENARIO_ORDER = [
@@ -719,6 +747,509 @@ def generate_advanced_plots(config_path, outdir, seeds):
     print(f"Saved advanced graphs to {outdir}/")
 
 
+# --- dependability set (Task 25) ---
+#
+# Unlike the advanced/final sets above (mostly single-parameter sweeps via
+# run_once), several of these plots need real closed-loop dependability
+# behavior (abstention/handoff actually overriding motion, not just being
+# logged) that only dependability_controllers.py's attach_dependability_layer
+# and experiments/failure_envelope.py's run_stress_pipeline provide - see
+# run_final_dependability_experiments.py's now-outdated handoff_stub note,
+# superseded by Task 17's real wiring.
+
+def sweep_two_metrics(config, scenario, overrides_list, seeds, key_x, key_y):
+    """Runs run_once(scenario) at each override point across `seeds` seeds
+    and returns (all_x, all_y) per-run pairs plus per-point (mean_x, mean_y)
+    for correlating two output metrics against each other."""
+    all_x, all_y, point_means = [], [], []
+    for overrides in overrides_list:
+        xs, ys = [], []
+        for s in range(seeds):
+            try:
+                run_config = copy.deepcopy(config)
+                if scenario not in run_config["scenarios"]:
+                    print(f"Warning: Scenario '{scenario}' not found, skipping")
+                    continue
+                run_config["scenarios"][scenario].update(overrides)
+                result = run_once(run_config, scenario, s)
+                x, y = result.get(key_x), result.get(key_y)
+                if x is not None and y is not None:
+                    xs.append(x)
+                    ys.append(y)
+                    all_x.append(x)
+                    all_y.append(y)
+            except Exception as e:
+                print(f"Warning: sweep failed for {scenario} {overrides} seed={s}: {e}")
+        if xs:
+            point_means.append((statistics.mean(xs), statistics.mean(ys)))
+    return all_x, all_y, point_means
+
+
+def scatter_plot(xs, ys, xlabel, ylabel, title, out_path, color=None, point_means=None):
+    color = color or ADV_COLOR
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    if xs:
+        ax.scatter(xs, ys, color=color, alpha=0.5, s=28, label="per-run")
+    if point_means:
+        ordered = sorted(point_means, key=lambda p: p[0])
+        ax.plot([p[0] for p in ordered], [p[1] for p in ordered], color=ADV_ACCENT,
+                 marker="o", linewidth=2, label="sweep-point mean")
+    if xs or point_means:
+        ax.legend(frameon=False, fontsize=9)
+    else:
+        print(f"Warning: no data for {title}")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    _adv_style(ax)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+CALIBRATION_ARMS = ["correctly_calibrated_radar", "mildly_overconfident_radar",
+                     "severely_overconfident_radar", "underconfident_radar"]
+
+
+def plot_calibration_reliability_diagram(config, outdir, seeds):
+    fig, ax = plt.subplots(figsize=(7, 6.5))
+    ax.plot([0, 1], [0, 1], linestyle="--", color="#999999", linewidth=1,
+             label="perfect calibration")
+    any_data = False
+    for arm, color in zip(CALIBRATION_ARMS, ADV_PALETTE):
+        rows = []
+        for s in range(seeds):
+            try:
+                run_config = copy.deepcopy(config)
+                run_config["sim"]["seed"] = s
+                r, _ = run_radar_track_fusion_pipeline(run_config, arm)
+                rows.extend(r)
+            except Exception as e:
+                print(f"Warning: reliability diagram failed for {arm} seed={s}: {e}")
+        if not rows:
+            continue
+        cal = confidence_calibration_metrics(rows, num_bins=10)
+        bins = [b for b in cal["reliability_bins"] if b["n"] > 0]
+        if not bins:
+            continue
+        any_data = True
+        ece = cal["expected_calibration_error"]
+        ax.plot([b["bin_confidence"] for b in bins], [b["bin_accuracy"] for b in bins],
+                 color=color, marker="o", linewidth=1.5,
+                 label=f"{arm.replace('_', ' ')} (ECE={ece:.3f})" if ece is not None else arm)
+    if not any_data:
+        print("Warning: no data for calibration reliability diagram")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Mean reported confidence (bin)")
+    ax.set_ylabel("Empirical accuracy (bin)")
+    ax.set_title("Calibration Reliability Diagram", fontsize=12, fontweight="bold")
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    _adv_style(ax)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "calibration_reliability_diagram.png"), dpi=150)
+    plt.close(fig)
+
+
+def plot_calibration_error_vs_collision_risk(config, outdir, seeds):
+    all_x, all_y, point_means = [], [], []
+    for arm in CALIBRATION_ARMS:
+        xs, ys = [], []
+        for s in range(seeds):
+            try:
+                result = run_once(copy.deepcopy(config), arm, s)
+                x, y = result.get("expected_calibration_error"), result.get("collision_risk_count")
+                if x is not None and y is not None:
+                    xs.append(x)
+                    ys.append(y)
+                    all_x.append(x)
+                    all_y.append(y)
+            except Exception as e:
+                print(f"Warning: calibration-vs-collision failed for {arm} seed={s}: {e}")
+        if xs:
+            point_means.append((statistics.mean(xs), statistics.mean(ys)))
+    scatter_plot(all_x, all_y, "Expected calibration error (ECE)", "Collision risk count",
+                 "Calibration Error vs Collision Risk",
+                 os.path.join(outdir, "calibration_error_vs_collision_risk.png"),
+                 point_means=point_means)
+
+
+def plot_registration_error_vs_fusion_rmse(config, outdir, seeds):
+    """The registration_* scenarios in simulation_config.json model radar<->
+    vision/LiDAR extrinsic miscalibration via cross_modal_registration, but
+    this project never generates vision/LiDAR detections
+    (simple_swarm_sim._generate_vision_lidar_detections always returns []),
+    so that knob has no live effect on any run. faulty_position_bias (Task
+    15, applied to one designated UAV's raw radar detections before
+    tracking/fusion) is the registration-style error that actually reaches
+    the fusion pipeline, so that's what's swept here instead."""
+    values = [0.0, 0.5, 1.0, 2.0, 4.0]
+    scenario = "correctly_calibrated_radar"
+    means, cis = [], []
+    for v in values:
+        vals = []
+        for s in range(seeds):
+            try:
+                run_config = copy.deepcopy(config)
+                run_config["sim"]["seed"] = s
+                scn = run_config["scenarios"][scenario]
+                scn["faulty_uav_id"] = 0
+                scn["faulty_position_bias"] = [v / math.sqrt(2), v / math.sqrt(2)]
+                model = RadarLikeModel(run_config, scenario)
+                detection_rows = model.run()
+                true_by_step = _true_positions_by_step(detection_rows)
+                fused_rows = build_fused_log(scenario, run_config,
+                                              architecture=ARCHITECTURE_CENTRALIZED, seed=s)
+                err = _nearest_object_error(fused_rows, true_by_step)
+                if err["mean_error"] is not None:
+                    vals.append(err["mean_error"])
+            except Exception as e:
+                print(f"Warning: registration sweep failed at bias={v}, seed={s}: {e}")
+        m, ci = mean_ci(vals)
+        means.append(m)
+        cis.append(ci)
+    line_ci_plot(values, means, cis, "Registration bias magnitude (m, faulty_position_bias)",
+                 "Fusion RMSE proxy - nearest-true-object error (m)",
+                 "Registration Error vs Fusion RMSE",
+                 os.path.join(outdir, "registration_error_vs_fusion_rmse.png"))
+
+
+def plot_sensor_correlation_vs_covariance_consistency(config, outdir, seeds):
+    """'Sensor correlation' is swept via disagreement_bias_std (per-UAV
+    random position bias std added before fusion, in
+    experiments/failure_envelope.py's run_stress_pipeline) - the larger the
+    disagreement, the less correlated the swarm's readings are. 'Covariance
+    consistency' is that same pipeline's distributed_consistency_std (spread
+    of independently-fused position estimates across UAVs), only computed
+    when instrument=True."""
+    values = [0.0, 0.5, 1.0, 2.0, 4.0]
+    means, cis = [], []
+    for v in values:
+        vals = []
+        for s in range(1, seeds + 1):
+            try:
+                m = run_stress_pipeline(config, "baseline", s,
+                                         disagreement_bias_std=v, instrument=True)
+                if m.get("distributed_consistency_std") is not None:
+                    vals.append(m["distributed_consistency_std"])
+            except Exception as e:
+                print(f"Warning: sensor correlation sweep failed at std={v}, seed={s}: {e}")
+        m_, ci = mean_ci(vals)
+        means.append(m_)
+        cis.append(ci)
+    line_ci_plot(values, means, cis, "Sensor disagreement std (m) - low = high correlation",
+                 "Covariance consistency - fused-estimate position spread (m)",
+                 "Sensor Correlation vs Covariance Consistency",
+                 os.path.join(outdir, "sensor_correlation_vs_covariance_consistency.png"))
+
+
+def plot_doppler_ambiguity_vs_response_error(config, outdir, seeds):
+    base_scenario = "rapidly_moving_obstacle"
+    values = [3.0, 1.5, 1.0, 0.5, 0.2]  # max_unambiguous_radial_velocity, descending -> more aliasing
+    overrides_list = [{"doppler_aliasing_enabled": True, "max_unambiguous_radial_velocity": v}
+                       for v in values]
+    all_x, all_y, point_means = sweep_two_metrics(
+        config, base_scenario, overrides_list, seeds, "doppler_ambiguity_count", "avg_response_time_s")
+    scatter_plot(all_x, all_y, "Doppler ambiguity count", "Avg response time (s)",
+                 "Doppler Ambiguity vs Response Error",
+                 os.path.join(outdir, "doppler_ambiguity_vs_response_error.png"),
+                 point_means=point_means)
+
+
+def plot_ghost_return_vs_false_track(config, outdir, seeds):
+    base_scenario = "high_clutter"
+    values = [1.0, 2.0, 3.0, 4.0, 5.0]
+    overrides_list = [{"extended_target_enabled": True, "mean_returns_per_target": v} for v in values]
+    all_x, all_y, point_means = sweep_two_metrics(
+        config, base_scenario, overrides_list, seeds, "ghost_track_count", "false_track_count")
+    scatter_plot(all_x, all_y, "Ghost track count", "False track count",
+                 "Ghost-Return Rate vs False-Track Count",
+                 os.path.join(outdir, "ghost_return_rate_vs_false_track_count.png"),
+                 point_means=point_means)
+
+
+def plot_perception_quality_vs_safety_margin(config, outdir, seeds):
+    base_scenario = "safety_margin_quality_monitor"
+    values = [0.0, 0.1, 0.2, 0.3, 0.4]
+    overrides_list = [{"radar_dropout_probability": v} for v in values]
+    all_x, all_y, point_means = [], [], []
+    for overrides in overrides_list:
+        xs, ys = [], []
+        for s in range(seeds):
+            try:
+                run_config = copy.deepcopy(config)
+                run_config["scenarios"][base_scenario].update(overrides)
+                result = run_once(run_config, base_scenario, s)
+                degraded = (result.get("time_in_degraded_mode") or 0) + \
+                    (result.get("time_in_critical_mode") or 0)
+                margin = result.get("mean_safety_margin_increase")
+                if margin is not None:
+                    xs.append(degraded)
+                    ys.append(margin)
+                    all_x.append(degraded)
+                    all_y.append(margin)
+            except Exception as e:
+                print(f"Warning: perception-quality sweep failed for {overrides} seed={s}: {e}")
+        if xs:
+            point_means.append((statistics.mean(xs), statistics.mean(ys)))
+    scatter_plot(all_x, all_y, "Steps in degraded/critical perception quality",
+                 "Mean safety margin increase (m)",
+                 "Perception Quality vs Safety Margin",
+                 os.path.join(outdir, "perception_quality_vs_safety_margin.png"),
+                 point_means=point_means)
+
+
+def _abstention_threshold_trial(config, scenario, good_threshold, seed):
+    run_config = copy.deepcopy(config)
+    run_config["sim"]["seed"] = seed
+    scn = run_config["scenarios"].setdefault(scenario, {})
+    scn["safety_margin_mode"] = "quality_monitor"
+    sim = Simulation(run_config, scenario)
+    attach_dependability_layer(sim, abstention=True, handoff=False)
+    sim.quality_monitor = PerceptionQualityMonitor(
+        good_threshold=good_threshold, critical_threshold=max(good_threshold - 0.3, 0.05))
+    metrics = sim.run()
+    metrics.update(_dependability_metrics(sim))
+    return metrics
+
+
+def plot_abstention_threshold_vs_mission_outcomes(config, outdir, seeds):
+    """compare_abstention in run_final_dependability_experiments.py (Task 23)
+    documents that its abstention layer isn't wired to mission success/delay
+    at all - only dependability_controllers.attach_dependability_layer (Task
+    17) closes that loop, by overriding _steer's velocity when the
+    abstention ladder fires. good_threshold is PerceptionQualityMonitor's
+    real GOOD/DEGRADED cut point (default 0.7, see
+    perception_quality_monitor.GOOD_THRESHOLD); critical_threshold is pinned
+    good_threshold-0.3 so the two move together as one 'threshold' knob."""
+    scenario = "simultaneous_sensor_failures"
+    thresholds = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
+    success_means, success_cis, delay_means, delay_cis = [], [], [], []
+    dt = config["sim"]["dt"]
+    for th in thresholds:
+        successes, delays = [], []
+        for s in range(seeds):
+            try:
+                m = _abstention_threshold_trial(config, scenario, th, s)
+                successes.append(1.0 if m.get("mission_success") else 0.0)
+                delays.append(m.get("steps_run", 0) * dt)
+            except Exception as e:
+                print(f"Warning: abstention threshold sweep failed at th={th}, seed={s}: {e}")
+        m1, c1 = mean_ci(successes)
+        m2, c2 = mean_ci(delays)
+        success_means.append(m1)
+        success_cis.append(c1)
+        delay_means.append(m2)
+        delay_cis.append(c2)
+    line_ci_plot(thresholds, success_means, success_cis, "Abstention GOOD-quality threshold",
+                 "Mission success rate", "Abstention Threshold vs Mission Success",
+                 os.path.join(outdir, "abstention_threshold_vs_mission_success.png"))
+    line_ci_plot(thresholds, delay_means, delay_cis, "Abstention GOOD-quality threshold",
+                 "Mission time (s)", "Abstention Threshold vs Mission Delay",
+                 os.path.join(outdir, "abstention_threshold_vs_mission_delay.png"), color=ADV_ACCENT)
+
+
+HANDOFF_STRATEGIES = ["2_uncertainty_aware", "4_uncertainty_aware_handoff", "5_dynamic_trust_handoff"]
+HANDOFF_LABELS = ["no handoff", "uncertainty-aware handoff", "dynamic-trust handoff"]
+
+
+def plot_handoff_strategy_vs_outcomes(config, outdir, seeds):
+    """Real handoff strategies from dependability_controllers.CONTROLLERS
+    (Task 17) - '2_uncertainty_aware' is the no-handoff baseline."""
+    scenario = "simultaneous_sensor_failures"
+    collision_means, collision_cis, recovery_means, recovery_cis = [], [], [], []
+    for strat in HANDOFF_STRATEGIES:
+        collisions, recoveries = [], []
+        for s in range(1, seeds + 1):
+            try:
+                m = run_any_controller(strat, config, scenario, s)
+                collisions.append(m.get("collision_count", 0))
+                if m.get("recovery_time_s") is not None:
+                    recoveries.append(m["recovery_time_s"])
+            except Exception as e:
+                print(f"Warning: handoff strategy sweep failed for {strat} seed={s}: {e}")
+        m1, c1 = mean_ci(collisions)
+        m2, c2 = mean_ci(recoveries)
+        collision_means.append(m1)
+        collision_cis.append(c1)
+        recovery_means.append(m2)
+        recovery_cis.append(c2)
+    bar_ci_plot(HANDOFF_LABELS, collision_means, collision_cis, "Collision count",
+                "Handoff Strategy vs Collision Risk",
+                os.path.join(outdir, "handoff_strategy_vs_collision_risk.png"),
+                colors=ADV_PALETTE[:len(HANDOFF_LABELS)])
+    bar_ci_plot(HANDOFF_LABELS, recovery_means, recovery_cis, "Recovery time (s)",
+                "Handoff Strategy vs Recovery Time",
+                os.path.join(outdir, "handoff_strategy_vs_recovery_time.png"),
+                colors=ADV_PALETTE[:len(HANDOFF_LABELS)])
+
+
+def plot_combined_fault_severity_vs_mission_success(config, outdir, seeds):
+    arms = [("very_low_P_D", 1), ("very_high_P_FA", 1), ("high_dropout", 1),
+            ("high_latency", 1), ("simultaneous_sensor_failures", 4)]
+    labels, means, cis, colors = [], [], [], []
+    for scenario, sev in arms:
+        vals = []
+        for s in range(seeds):
+            try:
+                result = run_once(copy.deepcopy(config), scenario, s)
+                if result.get("mission_success") is not None:
+                    vals.append(1.0 if result["mission_success"] else 0.0)
+            except Exception as e:
+                print(f"Warning: combined fault severity failed for {scenario} seed={s}: {e}")
+        m, ci = mean_ci(vals)
+        labels.append(f"{scenario}\n(severity {sev})")
+        means.append(m)
+        cis.append(ci)
+        colors.append("#4B5694" if sev == 1 else "#C2554A")
+    bar_ci_plot(labels, means, cis, "Mission success rate",
+                "Combined Fault Severity vs Mission Success",
+                os.path.join(outdir, "combined_fault_severity_vs_mission_success.png"), colors=colors)
+
+
+def _positions_for_n(n):
+    default = [[5.0, 5.0], [5.0, 15.0], [15.0, 5.0], [15.0, 15.0]]
+    if n <= len(default):
+        return default[:n]
+    cx, cy, r = 10.0, 10.0, 10.0
+    return [[cx + r * math.cos(2 * math.pi * i / n), cy + r * math.sin(2 * math.pi * i / n)]
+            for i in range(n)]
+
+
+def plot_swarm_size_vs_comm_and_runtime(config, outdir, seeds):
+    """instrument=True (Task 20's run_stress_pipeline hook) times fuse_step
+    and counts messages/tracks - real per-run cost, not simulated."""
+    sizes = [2, 3, 4, 6, 8]
+    load_means, load_cis, runtime_means, runtime_cis = [], [], [], []
+    for n in sizes:
+        loads, runtimes = [], []
+        for s in range(1, min(seeds, 3) + 1):
+            try:
+                run_config = copy.deepcopy(config)
+                run_config["swarm"] = dict(run_config["swarm"])
+                run_config["swarm"]["num_uavs"] = n
+                run_config["swarm"]["start_positions"] = _positions_for_n(n)
+                t0 = time.perf_counter()
+                m = run_stress_pipeline(run_config, "baseline", s, instrument=True)
+                runtimes.append(time.perf_counter() - t0)
+                steps = m.get("steps_run") or 1
+                if m.get("message_count") is not None:
+                    loads.append(m["message_count"] / steps)
+            except Exception as e:
+                print(f"Warning: swarm size sweep failed at n={n}, seed={s}: {e}")
+        m1, c1 = mean_ci(loads)
+        m2, c2 = mean_ci(runtimes)
+        load_means.append(m1)
+        load_cis.append(c1)
+        runtime_means.append(m2)
+        runtime_cis.append(c2)
+    line_ci_plot(sizes, load_means, load_cis, "Swarm size (num UAVs)",
+                 "Communication load (avg fused messages/step)",
+                 "Swarm Size vs Communication Load",
+                 os.path.join(outdir, "swarm_size_vs_communication_load.png"))
+    line_ci_plot(sizes, runtime_means, runtime_cis, "Swarm size (num UAVs)",
+                 "Simulation runtime (wall-clock s)",
+                 "Swarm Size vs Simulation Runtime",
+                 os.path.join(outdir, "swarm_size_vs_simulation_runtime.png"), color=ADV_ACCENT)
+
+
+def plot_failure_envelope_heatmap(config, outdir, seeds):
+    pd_values = [1.0, 0.7, 0.5, 0.3, 0.1]
+    pfa_values = [0.0, 0.1, 0.2, 0.3, 0.4]
+    severity_rank = {"SAFE": 0, "DEGRADED BUT FUNCTIONAL": 1, "MISSION FAILURE": 2, "SAFETY FAILURE": 3}
+    severity_label = {v: k for k, v in severity_rank.items()}
+    seed_list = list(range(1, min(seeds, 2) + 1))
+
+    baseline_runs = []
+    for s in seed_list:
+        try:
+            baseline_runs.append(run_stress_pipeline(config, "baseline", s))
+        except Exception as e:
+            print(f"Warning: baseline run failed for heatmap seed={s}: {e}")
+    baseline_near_miss = (sum(r["near_miss_count"] for r in baseline_runs) / len(baseline_runs)
+                           if baseline_runs else None)
+    formation_vals = [r["avg_formation_error"] for r in baseline_runs if r.get("avg_formation_error")]
+    baseline_formation_error = sum(formation_vals) / len(formation_vals) if formation_vals else None
+
+    grid = []
+    for pd_val in pd_values:
+        row = []
+        for pfa_val in pfa_values:
+            try:
+                run_config = copy.deepcopy(config)
+                scn = dict(run_config["scenarios"].get("baseline", {}))
+                scn["radar_detection_probability"] = pd_val
+                scn["radar_false_alarm_probability"] = pfa_val
+                run_config["scenarios"] = dict(run_config["scenarios"])
+                run_config["scenarios"]["_heatmap_point"] = scn
+                classes = [classify(run_stress_pipeline(run_config, "_heatmap_point", s),
+                                     baseline_near_miss, baseline_formation_error)
+                           for s in seed_list]
+                worst = max(classes, key=lambda c: severity_rank[c])
+                row.append(severity_rank[worst])
+            except Exception as e:
+                print(f"Warning: heatmap point failed at P_D={pd_val}, P_FA={pfa_val}: {e}")
+                row.append(None)
+        grid.append(row)
+
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+    arr = np.array([[v if v is not None else np.nan for v in row] for row in grid])
+    cmap = matplotlib.colors.ListedColormap(["#4B5694", "#6E9075", "#D98C3D", "#C2554A"])
+    im = ax.imshow(arr, cmap=cmap, vmin=-0.5, vmax=3.5)
+    ax.set_xticks(range(len(pfa_values)))
+    ax.set_xticklabels(pfa_values)
+    ax.set_yticks(range(len(pd_values)))
+    ax.set_yticklabels(pd_values)
+    ax.set_xlabel("False alarm probability (P_FA)")
+    ax.set_ylabel("Detection probability (P_D)")
+    ax.set_title("Final Failure-Envelope Heatmap\n(worst outcome across seeds, controller=dynamic_trust_handoff)",
+                 fontsize=11, fontweight="bold")
+    cbar = fig.colorbar(im, ax=ax, ticks=[0, 1, 2, 3])
+    cbar.ax.set_yticklabels([severity_label[i] for i in range(4)])
+    for i in range(len(pd_values)):
+        for j in range(len(pfa_values)):
+            if grid[i][j] is not None:
+                ax.text(j, i, severity_label[grid[i][j]].split()[0], ha="center", va="center",
+                         fontsize=7, color="white")
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "final_failure_envelope_heatmap.png"), dpi=150)
+    plt.close(fig)
+
+
+DEPENDABILITY_PLOTS = [
+    plot_calibration_reliability_diagram,
+    plot_calibration_error_vs_collision_risk,
+    plot_registration_error_vs_fusion_rmse,
+    plot_sensor_correlation_vs_covariance_consistency,
+    plot_doppler_ambiguity_vs_response_error,
+    plot_ghost_return_vs_false_track,
+    plot_perception_quality_vs_safety_margin,
+    plot_abstention_threshold_vs_mission_outcomes,
+    plot_handoff_strategy_vs_outcomes,
+    plot_combined_fault_severity_vs_mission_success,
+    plot_swarm_size_vs_comm_and_runtime,
+    plot_failure_envelope_heatmap,
+]
+
+
+def generate_dependability_plots(config_path, outdir, seeds):
+    os.makedirs(outdir, exist_ok=True)
+    with open(config_path) as f:
+        config = json.load(f)
+
+    print(f"\nGenerating dependability plots ...")
+    for i, plot_fn in enumerate(DEPENDABILITY_PLOTS, 1):
+        try:
+            print(f"  [{i}/{len(DEPENDABILITY_PLOTS)}] {plot_fn.__name__}...")
+            plot_fn(config, outdir, seeds)
+        except Exception as e:
+            print(f"    Warning: {plot_fn.__name__} failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print(f"Saved dependability graphs to {outdir}/")
+
+
 # --- final set: curated 1:1 with the required final-deliverable plot list ---
 #
 #   1. P_D vs missed response          7. packet loss vs mission success
@@ -770,12 +1301,21 @@ def main():
     parser.add_argument("--config", default="simulation_config.json", help="Advanced-set input config")
     parser.add_argument("--advanced-outdir", default="plots/advanced")
     parser.add_argument("--final-outdir", default="plots/final", help="Curated final-deliverable set output folder")
-    parser.add_argument("--seeds", type=int, default=4, help="Seeds per advanced/final-set data point")
+    parser.add_argument("--dependability-outdir", default="plots/dependability",
+                         help="Task 25 dependability set output folder")
+    parser.add_argument("--seeds", type=int, default=4, help="Seeds per advanced/final/dependability data point")
     parser.add_argument("--skip-advanced", action="store_true", help="Skip the full advanced/exploratory set")
     parser.add_argument("--skip-final", action="store_true", help="Skip the curated final-deliverable set")
+    parser.add_argument("--skip-dependability", action="store_true", help="Skip the Task 25 dependability set")
     parser.add_argument("--final-only", action="store_true",
                          help="Only generate the curated final set (skip basic + advanced)")
+    parser.add_argument("--dependability-only", action="store_true",
+                         help="Only generate the Task 25 dependability set (skip basic + advanced + final)")
     args = parser.parse_args()
+
+    if args.dependability_only:
+        generate_dependability_plots(args.config, args.dependability_outdir, args.seeds)
+        return
 
     if args.final_only:
         generate_final_plots(args.config, args.final_outdir, args.seeds)
@@ -852,6 +1392,9 @@ def main():
 
     if not args.skip_final:
         generate_final_plots(args.config, args.final_outdir, args.seeds)
+
+    if not args.skip_dependability:
+        generate_dependability_plots(args.config, args.dependability_outdir, args.seeds)
 
 
 if __name__ == "__main__":
