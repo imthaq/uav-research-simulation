@@ -484,6 +484,10 @@ def main():
     rows = []
     scenario_runs = {}  # scenario_name -> list of per-run metric dicts, for the console summary
 
+    total_runs = len(scenario_names) * args.runs
+    done = 0
+    print(f"Analyzing {len(scenario_names)} scenarios, {args.runs} runs each (Total: {total_runs})...")
+
     for scenario_name in scenario_names:
         scn = config["scenarios"][scenario_name]
         params = scenario_params(scn)
@@ -493,6 +497,9 @@ def main():
             seed = base_seed + (run_number - 1)
             m = run_once(config, scenario_name, seed)
             run_metrics_list.append(m)
+            
+            done += 1
+            print(f"  [{done}/{total_runs}] Completed {scenario_name} run {run_number} (seed={seed})")
 
             row = {
                 "scenario": scenario_name,

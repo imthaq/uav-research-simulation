@@ -4,7 +4,7 @@ import json
 import math
 import random
 
-from perception_quality_monitor import PerceptionQualityMonitor, GOOD, DEGRADED, CRITICAL
+from dependability.perception_quality_monitor import PerceptionQualityMonitor, GOOD, DEGRADED, CRITICAL
 
 
 def dist(p1, p2):
