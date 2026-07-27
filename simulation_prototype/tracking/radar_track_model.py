@@ -72,7 +72,7 @@ for _p in (_ROOT_DIR, _MODELS_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from radar_like_model import RadarLikeModel
+from models.radar_like_model import RadarLikeModel
 
 # Consecutive matches needed before a tentative track becomes confirmed.
 CONFIRM_HITS = 3

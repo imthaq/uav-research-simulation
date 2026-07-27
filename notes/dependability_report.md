@@ -32,5 +32,5 @@ mission_success_rate (higher = better) plus collision_risk_count (lower = better
 
 ## normal_vs_ghost_aliasing_radar
 
-nearest-true-object fused position error, meters, plus fused-track count inflation. ghost_aliasing performed better on this metric (0.49746999999999997 vs 0.46283)
+nearest-true-object fused position error, meters, plus fused-track count inflation. ghost_aliasing performed better on this metric (0.49746 vs 0.46283)
 
