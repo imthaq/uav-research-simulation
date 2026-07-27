@@ -33,13 +33,13 @@ if _DEPENDABILITY_DIR not in sys.path:
     sys.path.insert(0, _DEPENDABILITY_DIR)
 
 from simple_swarm_sim import Simulation, normalize
-from perception_quality_monitor import GOOD, DEGRADED, CRITICAL
-from selective_swarm_decision import (
+from dependability.perception_quality_monitor import GOOD, DEGRADED, CRITICAL
+from dependability.selective_swarm_decision import (
     SelectiveDecisionMaker, HOLD_POSITION, MARK_UNSAFE_TO_EXECUTE, REDUCE_SPEED,
     INCREASE_FORMATION_SPACING, REQUEST_PEER_TRACK as SEL_REQUEST_PEER_TRACK,
     TRANSFER_TO_CENTRALIZED_FUSION,
 )
-from perception_handoff_model import (
+from dependability.perception_handoff_model import (
     PerceptionHandoffModel, SAFE_HOLD, REQUEST_PEER_TRACK, CENTRALIZED_FUSION_HANDOFF,
 )
 
