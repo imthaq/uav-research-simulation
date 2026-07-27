@@ -35,7 +35,7 @@ if _ROOT_DIR not in sys.path:
 
 from experiments.failure_envelope import run_stress_pipeline, SEEDS_PER_POINT
 
-OUT_PATH = os.path.join(_ROOT_DIR, "swarm_scalability_results.csv")
+OUT_PATH = os.path.join(_ROOT_DIR, "results", "swarm_scalability_results.csv")
 SWARM_SIZES = [3, 5, 10, 20]
 
 

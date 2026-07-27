@@ -10,7 +10,7 @@ if _ROOT_DIR not in sys.path:
 
 from experiments.failure_envelope import run_point, classify, SEEDS_PER_POINT
 
-OUT_PATH = os.path.join(_ROOT_DIR, "combined_fault_results.md")
+OUT_PATH = os.path.join(_ROOT_DIR, "results", "combined_fault_results.md")
 
 CROSSING_TARGETS = [
     {"id": "obstacle_0", "kind": "static_obstacle", "x": 50.0, "y": 50.0, "radius": 5.0},

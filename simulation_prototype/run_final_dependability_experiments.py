@@ -40,8 +40,10 @@ import time
 from datetime import datetime, timezone
 
 _ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _ROOT_DIR not in sys.path:
-    sys.path.insert(0, _ROOT_DIR)
+_DEPENDABILITY_DIR = os.path.join(_ROOT_DIR, "dependability")
+for _p in (_ROOT_DIR, _DEPENDABILITY_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from dependability_common import clone_scenario, run_trials, seed_range, DependabilityWriter
 

@@ -25,6 +25,12 @@ lets the abstention/handoff decision override the velocity _steer already
 picked.
 """
 import copy
+import os
+import sys
+
+_DEPENDABILITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dependability")
+if _DEPENDABILITY_DIR not in sys.path:
+    sys.path.insert(0, _DEPENDABILITY_DIR)
 
 from simple_swarm_sim import Simulation, normalize
 from perception_quality_monitor import GOOD, DEGRADED, CRITICAL

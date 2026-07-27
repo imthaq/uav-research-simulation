@@ -37,7 +37,7 @@ from tracking.radar_track_model import RadarTracker
 from fusion.fusion_model import fuse_step, TrustTracker
 
 SEEDS_PER_POINT = 2
-OUT_PATH = os.path.join(_ROOT_DIR, "swarm_failure_envelope.csv")
+OUT_PATH = os.path.join(_ROOT_DIR, "results", "swarm_failure_envelope.csv")
 
 
 def run_stress_pipeline(config, scenario_name, seed, num_faulty_uavs=0,
