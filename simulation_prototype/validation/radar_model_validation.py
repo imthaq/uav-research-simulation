@@ -30,7 +30,7 @@ import os
 import statistics
 import sys
 
-_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MODELS_DIR = os.path.join(_ROOT_DIR, "models")
 for _p in (_ROOT_DIR, _MODELS_DIR):
     if _p not in sys.path:

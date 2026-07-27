@@ -103,7 +103,7 @@
       "task": "low_packet_loss",
       "description": "every non-lost message is marked delivered (no third outcome for a range-unlimited, non-stale channel)",
       "passed": true,
-      "detail": "outcomes seen={'delivered', 'packet_loss'}"
+      "detail": "outcomes seen={'packet_loss', 'delivered'}"
     },
     {
       "task": "low_packet_loss",

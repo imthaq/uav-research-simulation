@@ -20,6 +20,11 @@ Run directly:
 import math
 import statistics
 import sys
+import os
+
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
 
 from metrics_analysis import _rmse, perception_metrics, communication_metrics
 

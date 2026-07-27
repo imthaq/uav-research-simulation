@@ -36,9 +36,11 @@ import inspect
 import os
 import sys
 
-_ROOT = os.path.dirname(os.path.abspath(__file__))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEPENDABILITY_DIR = os.path.join(_ROOT, "dependability")
+for _p in (_ROOT, _DEPENDABILITY_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from perception_handoff_model import (
     PerceptionHandoffModel, evaluate_triggers,
