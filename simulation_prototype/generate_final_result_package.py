@@ -71,7 +71,7 @@ import traceback
 from datetime import datetime, timezone
 
 from metrics_analysis import run_once, scenario_params, SWARM_FIELDS, PERCEPTION_FIELDS, COMMUNICATION_FIELDS
-from validation_common import Checker
+from validation.validation_common import Checker
 
 _ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
