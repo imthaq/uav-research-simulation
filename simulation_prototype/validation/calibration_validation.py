@@ -45,7 +45,7 @@ from metrics_analysis import (
     _reliability_bins,
 )
 from models.radar_like_model import calibration_pairs as radar_calibration_pairs
-from validation_common import Checker
+from validation.validation_common import Checker
 
 _c = Checker()
 

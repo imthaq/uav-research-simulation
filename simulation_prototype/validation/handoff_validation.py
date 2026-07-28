@@ -57,7 +57,7 @@ from perception_handoff_model import (
     EVENT_TRIGGERED, EVENT_RESOLVED,
 )
 from perception_quality_monitor import CRITICAL, GOOD
-from validation_common import Checker
+from validation.validation_common import Checker
 
 _c = Checker()
 

@@ -39,7 +39,7 @@ for _p in (_ROOT_DIR,):
         sys.path.insert(0, _p)
 
 from tracking.radar_track_model import RadarTracker, RadarTrack, MAX_MISSED, CONFIRM_HITS
-from validation_common import Checker
+from validation.validation_common import Checker
 
 _checker = Checker()
 

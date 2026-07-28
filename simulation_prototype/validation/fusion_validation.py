@@ -44,7 +44,7 @@ from fusion.fusion_model import (
     NAIVE_FUSION, CONFIDENCE_WEIGHTED_FUSION, TRUST_WEIGHTED_FUSION,
     COVARIANCE_WEIGHTED_FUSION, COVARIANCE_INTERSECTION_FUSION, NO_FUSION,
 )
-from validation_common import Checker
+from validation.validation_common import Checker
 
 _checker = Checker()
 
