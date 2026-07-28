@@ -284,50 +284,49 @@ def check_run_integrity(config_before_hash, config, scenario_name, run_number, s
     codes (empty list = run is clean)."""
     failures = []
 
-    # output file exists / is not empty
     if save_step_log:
         if not out_path or not os.path.exists(out_path):
-            failures.append("output_file_missing")
+            failures.append(("output_missing", "Step log output file was not created"))
         elif os.path.getsize(out_path) == 0:
-            failures.append("output_file_empty")
+            failures.append(("output_empty", "Step log output file is empty"))
     if not sim.log_rows:
-        failures.append("output_empty")
+        failures.append(("output_empty", "Simulation generated no log rows"))
 
     # no output file is overwritten *within this run* - i.e. two entries in
     # this run's own matrix never target the same path (a real collision/bug).
     # Reusing a directory from a *previous* invocation is normal and not
     # flagged here.
     if in_run_collision:
-        failures.append("output_overwritten")
+        failures.append(("output_overwritten", "Step log output file collided with another run"))
 
     # required columns exist
     missing_cols = set(RUN_FIELDNAMES) - set(row)
     if missing_cols:
-        failures.append(f"missing_columns:{','.join(sorted(missing_cols))}")
+        failures.append(("missing_columns", f"Missing columns: {','.join(sorted(missing_cols))}"))
 
     # no NaN in critical metrics (None is fine for the two averages, NaN never is)
     for m in _CRITICAL_INT_METRICS:
         if row.get(m) is None or _is_nan(row.get(m)):
-            failures.append(f"bad_metric:{m}")
+            failures.append(("bad_metric", f"Metric {m} contains NaN or None"))
     for m in ("avg_response_time_s", "avg_formation_error"):
         if _is_nan(row.get(m)):
-            failures.append(f"bad_metric:{m}")
+            failures.append(("bad_metric", f"Metric {m} contains NaN"))
 
     # simulation completed
     if not metrics.get("steps_run"):
-        failures.append("simulation_not_completed")
+        failures.append(("simulation_not_completed", "steps_run is missing or 0"))
 
     # mission status is recorded
     if row.get("mission_success") not in ("Yes", "No"):
-        failures.append("mission_status_missing")
+        failures.append(("mission_status_missing", "mission_success is not Yes or No"))
 
     # random seed is recorded
     if row.get("seed") != seed:
-        failures.append("seed_not_recorded")
+        failures.append(("seed_not_recorded", f"Recorded seed {row.get('seed')} does not match requested seed {seed}"))
 
     # configuration is copied (run_config must never mutate the shared config)
     if _config_hash(config) != config_before_hash:
-        failures.append("config_mutated")
+        failures.append(("config_mutated", "The shared configuration dict was mutated during execution"))
 
     return failures
 
@@ -503,9 +502,16 @@ def main():
         checks_failed = check_run_integrity(
             config_before_hash, config, scenario_name, trial, seed, sim, metrics, row,
             out_path, not args.skip_step_logs, in_run_collision)
-        if checks_failed:
-            failed_runs.append({"scenario": scenario_name, "run_number": trial, "seed": seed,
-                                 "checks_failed": ";".join(checks_failed)})
+        for failure_type, error_msg in checks_failed:
+            failed_runs.append({
+                "scenario_id": scenario_name,
+                "trial_number": trial,
+                "random_seed": seed,
+                "failure_type": failure_type,
+                "error_message": error_msg,
+                "output_directory": os.path.dirname(out_path) if out_path else args.logs_dir,
+                "rerun_status": "PENDING"
+            })
 
         log_note = out_path if out_path else "(step log skipped)"
         print(f"[{scenario_name} trial {trial}/{args.trials} | seed={seed}] -> {log_note}")
@@ -515,7 +521,8 @@ def main():
               f"fusion_mode={metrics['fusion_mode']}  "
               f"fusion_recovery={metrics['fusion_recovery_count']}")
         if checks_failed:
-            print(f"    INTEGRITY CHECK FAILED: {', '.join(checks_failed)}")
+            fail_str = ", ".join(f[0] for f in checks_failed)
+            print(f"    INTEGRITY CHECK FAILED: {fail_str}")
 
     wall_clock_seconds = time.monotonic() - start_time
 
@@ -562,7 +569,10 @@ def main():
     if failed_runs_dir:
         os.makedirs(failed_runs_dir, exist_ok=True)
     with open(args.failed_runs_output, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["scenario", "run_number", "seed", "checks_failed"])
+        writer = csv.DictWriter(f, fieldnames=[
+            "scenario_id", "trial_number", "random_seed", "failure_type",
+            "error_message", "output_directory", "rerun_status"
+        ])
         writer.writeheader()
         writer.writerows(failed_runs)
     if failed_runs:
