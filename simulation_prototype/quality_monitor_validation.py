@@ -44,7 +44,7 @@ for _p in (_ROOT, _DEPENDABILITY_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from perception_quality_monitor import (
+from dependability.perception_quality_monitor import (
     PerceptionQualityMonitor,
     GOOD, DEGRADED, CRITICAL,
     COVARIANCE_TRACE_REFERENCE, AGE_MATURITY_STEPS,
@@ -55,7 +55,7 @@ from perception_quality_monitor import (
     _score_agreement, _score_innovation, _score_calibration,
     _score_communication_age, _score_dropout_rate, _score_trust,
 )
-from validation_common import Checker
+from validation.validation_common import Checker
 
 _c = Checker()
 
@@ -409,7 +409,7 @@ def test_evaluate_track_row_json_covariance():
 # T18: DEMO_TRACKS canonical ordering: healthy > new > coasting > stale > unreliable
 # ---------------------------------------------------------------------------
 def test_canonical_track_ordering():
-    from perception_quality_monitor import DEMO_TRACKS
+    from dependability.perception_quality_monitor import DEMO_TRACKS
     monitor = PerceptionQualityMonitor()
     scores = {name: monitor.score(signals)[0]
               for name, signals in DEMO_TRACKS.items()
