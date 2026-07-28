@@ -1,3 +1,9 @@
+"""
+run_experiments.py / metrics_analysis.py
+
+Aggregates swarm-simulation metrics across scenarios/runs.
+Includes comprehensive Tracking, Fusion, Swarm, and Communication metrics.
+"""
 import argparse
 import copy
 import csv
@@ -11,9 +17,7 @@ from simple_swarm_sim import run_radar_track_fusion_pipeline
 
 
 def scenario_params(scn):
-    """Pulls out the perception-error / fusion parameters for a scenario,
-    using the same defaults Perception/Simulation fall back on when a key
-    is absent."""
+    """Pulls out the perception-error / fusion parameters for a scenario."""
     return {
         "false_positive_rate": scn.get("false_positive_rate", 0.0),
         "false_negative_rate": scn.get("false_negative_rate", 0.0),
@@ -38,6 +42,14 @@ def _rmse(pairs):
     return round(math.sqrt(statistics.mean(dx * dx + dy * dy for dx, dy in pairs)), 4)
 
 
+def _rmse_1d(vals):
+    """vals is an iterable of 1D errors/deviations."""
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    return round(math.sqrt(statistics.mean(v * v for v in vals)), 4)
+
+
 def _run_lengths(flags):
     """Lengths of consecutive True runs in a bool sequence."""
     lengths, current = [], 0
@@ -54,32 +66,27 @@ def _run_lengths(flags):
 
 
 def perception_metrics(rows):
-    """RMSE/tracking/association metrics - optimized for large datasets."""
-    # Single pass through all rows to collect diverse metrics
+    """Tracking/association metrics - optimized for large datasets."""
     rmse_pairs = []
-    fusion_pairs = []
     velocity_errors = []
-    false_alarms = 0
+    false_detections = 0
     missed_detections = 0
+    false_tracks = 0
+    missed_tracks = 0
     association_errors = 0
     active_count = 0
     active_good = 0
     covariance_traces = []
     
-    by_uav = {}  # Will collect rows by UAV ID without sorting
+    by_uav = {}  
     
     for r in rows:
         # RMSE position
-        if r.get("detected_x") is not None:
+        if r.get("detected_x") is not None and r.get("true_target_x") is not None:
             rmse_pairs.append((r["detected_x"] - r["true_target_x"], 
-                             r["detected_y"] - r["true_target_y"]))
+                               r["detected_y"] - r["true_target_y"]))
         
-        # Fusion consistency
-        if r.get("fused_x") is not None:
-            fusion_pairs.append((r["fused_x"] - r["true_target_x"], 
-                               r["fused_y"] - r["true_target_y"]))
-        
-        # Velocity errors
+        # Velocity errors (tracked as 1D deviations for velocity RMSE)
         if r.get("measured_radial_velocity") is not None and r.get("true_radial_velocity") is not None:
             velocity_errors.append(abs(r["measured_radial_velocity"] - r["true_radial_velocity"]))
         
@@ -87,14 +94,18 @@ def perception_metrics(rows):
         if r.get("track_covariance_trace") is not None:
             covariance_traces.append(r["track_covariance_trace"])
         
-        # False alarms and missed detections
-        if r.get("false_alarm_flag"):
-            false_alarms += 1
+        # Detections vs Tracks flags
+        if r.get("false_detection_flag") or r.get("false_alarm_flag"):
+            false_detections += 1
         if r.get("missed_detection_flag"):
             missed_detections += 1
+        if r.get("false_track_flag"):
+            false_tracks += 1
+        if r.get("missed_track_flag"):
+            missed_tracks += 1
         
         # Association errors
-        if r.get("clutter_flag") and r.get("track_status") is not None:
+        if r.get("association_error_flag") or (r.get("clutter_flag") and r.get("track_status") is not None):
             association_errors += 1
         
         # Track continuity
@@ -103,57 +114,116 @@ def perception_metrics(rows):
             if r.get("track_status") in ("tentative", "confirmed", "coasting"):
                 active_good += 1
         
-        # Group by UAV (unsorted to avoid expensive sort)
+        # Group by UAV
         uav_id = r.get("uav_id")
         if uav_id is not None:
             by_uav.setdefault(uav_id, []).append(r)
     
-    # Track confirmation and fragmentation analysis
+    # Track confirmation, fragmentation, and lifetime analysis
     confirmation_times, fragmentation_count, loss_durations = [], 0, []
+    lifetimes = []
+    
     for uav_rows in by_uav.values():
-        first_seen, confirmed_at, prev_id = {}, {}, None
+        first_seen, confirmed_at, last_seen, prev_id = {}, {}, {}, None
         for r in uav_rows:
             tid = r.get("radar_track_id")
+            t = r.get("time_step")
             if tid is not None:
-                first_seen.setdefault(tid, r.get("time_step"))
+                first_seen.setdefault(tid, t)
+                last_seen[tid] = t
                 if r.get("track_status") == "confirmed" and tid not in confirmed_at:
-                    confirmed_at[tid] = r.get("time_step")
+                    confirmed_at[tid] = t
                 if prev_id is not None and tid != prev_id:
                     fragmentation_count += 1
             prev_id = tid if tid is not None else prev_id
+            
         confirmation_times.extend(confirmed_at[tid] - first_seen[tid] for tid in confirmed_at)
+        lifetimes.extend(last_seen[tid] - first_seen[tid] for tid in first_seen)
         loss_durations.extend(_run_lengths(r.get("missed_detection_flag") for r in uav_rows))
     
     continuity = (active_good / active_count) if active_count else None
     
     return {
         "rmse_position_error": _rmse(rmse_pairs),
-        "velocity_estimation_error": _mean(velocity_errors),
+        "velocity_rmse": _rmse_1d(velocity_errors),
         "track_continuity": round(continuity, 4) if continuity is not None else None,
         "track_fragmentation": fragmentation_count,
-        "false_track_count": false_alarms,
-        "missed_track_count": missed_detections,
+        "false_detections": false_detections,
+        "missed_detections": missed_detections,
+        "false_tracks": false_tracks,
+        "missed_tracks": missed_tracks,
         "track_confirmation_time_steps": _mean(confirmation_times),
         "track_loss_duration_steps": _mean(loss_durations),
-        "association_error_count": association_errors,
+        "average_track_lifetime_steps": _mean(lifetimes),
+        "association_errors": association_errors,
         "average_covariance": _mean(covariance_traces),
-        "fusion_consistency_error": _rmse(fusion_pairs),
+    }
+
+
+def fusion_metrics(rows):
+    """Multi-source Fusion metrics."""
+    fused_pairs = []
+    nees_list = []
+    stale_count = 0
+    faulty_influence = []
+    sensor_contributions = []
+
+    for r in rows:
+        # Fused position RMSE
+        if r.get("fused_x") is not None and r.get("true_target_x") is not None:
+            fused_pairs.append((r["fused_x"] - r["true_target_x"], 
+                                r["fused_y"] - r["true_target_y"]))
+        
+        # Covariance consistency (NEES)
+        if r.get("fused_x") is not None and r.get("fused_covariance_x") is not None:
+            ex = r["fused_x"] - r["true_target_x"]
+            ey = r["fused_y"] - r["true_target_y"]
+            cov_x = max(r["fused_covariance_x"], 1e-6)
+            cov_y = max(r.get("fused_covariance_y", cov_x), 1e-6)
+            nees_list.append((ex**2 / cov_x) + (ey**2 / cov_y))
+            
+        if r.get("stale_data_flag"):
+            stale_count += 1
+            
+        if r.get("sensor_contribution") is not None:
+            sensor_contributions.append(r["sensor_contribution"])
+            
+        if r.get("faulty_sensor_influence") is not None:
+            faulty_influence.append(r["faulty_sensor_influence"])
+
+    return {
+        "fused_position_rmse": _rmse(fused_pairs),
+        "covariance_consistency_nees": _mean(nees_list),
+        "avg_sensor_contribution": _mean(sensor_contributions),
+        "stale_data_count": stale_count,
+        "avg_faulty_sensor_influence": _mean(faulty_influence),
     }
 
 
 def communication_metrics(rows):
-    """Communication metrics - single pass aggregation."""
+    """Communication load and reliability metrics."""
     total_sent = 0
     sent_list = []
     sources_list = []
     delays = []
+    stale_messages = 0
+    outage_lengths = []
+    recovery_times = []
     
-    # Single pass through all rows
+    current_outage = 0
+    
     for r in rows:
         msg_count = r.get("fusion_comm_messages")
         if msg_count is not None:
             total_sent += msg_count
             sent_list.append(msg_count)
+            
+            # Simple global outage tracker (0 messages received when sent > 0)
+            if msg_count > 0 and r.get("fusion_num_sources", 0) == 0:
+                current_outage += 1
+            elif current_outage > 0:
+                outage_lengths.append(current_outage)
+                current_outage = 0
         
         num_sources = r.get("fusion_num_sources")
         if num_sources is not None:
@@ -162,32 +232,41 @@ def communication_metrics(rows):
         delay = r.get("fusion_response_time_steps")
         if delay is not None:
             delays.append(delay)
+            
+        if r.get("stale_message_flag"):
+            stale_messages += 1
+            
+        if r.get("recovery_time_steps") is not None:
+            recovery_times.append(r.get("recovery_time_steps"))
+            
+    if current_outage > 0:
+        outage_lengths.append(current_outage)
     
-    # Every UAV that reported a track is a source that got fused in; the gap
-    # between attempted uplinks and used sources approximates drop/staleness.
     dropped = sum(s - n for s, n in zip(sent_list, sources_list))
     
     return {
         "messages_sent": total_sent,
+        "messages_received": total_sent - dropped,
         "messages_dropped": dropped,
+        "stale_messages": stale_messages,
         "avg_message_delay_steps": _mean(delays),
         "communication_load": _mean(sent_list),
+        "max_outage_duration_steps": max(outage_lengths) if outage_lengths else 0,
+        "avg_recovery_time_steps": _mean(recovery_times),
     }
 
 
 def dependability_metrics(rows):
-    """Dependability metrics: single-pass aggregation for performance."""
+    """System-level dependability."""
     abstention_flags = []
     correct_abstention = []
     unnecessary_abstention = []
     handoff_success = []
     handoff_failure = []
-    recovery_times = []
     degraded_count = 0
     critical_count = 0
     safety_margin_values = []
     
-    # Single pass through all rows
     for r in rows:
         if r.get("abstention_flag") is not None:
             abstention_flags.append(r.get("abstention_flag"))
@@ -199,8 +278,6 @@ def dependability_metrics(rows):
             handoff_success.append(r.get("handoff_success_flag"))
         if r.get("handoff_failure_flag") is not None:
             handoff_failure.append(r.get("handoff_failure_flag"))
-        if r.get("recovery_time_steps") is not None:
-            recovery_times.append(r.get("recovery_time_steps"))
         if r.get("degraded_mode_flag"):
             degraded_count += 1
         if r.get("critical_mode_flag"):
@@ -214,7 +291,6 @@ def dependability_metrics(rows):
         "unnecessary_abstention_rate": round(sum(unnecessary_abstention) / len(unnecessary_abstention), 4) if unnecessary_abstention else None,
         "handoff_success_rate": round(sum(handoff_success) / len(handoff_success), 4) if handoff_success else None,
         "handoff_failure_rate": round(sum(handoff_failure) / len(handoff_failure), 4) if handoff_failure else None,
-        "mean_recovery_time_steps": _mean(recovery_times),
         "time_in_degraded_mode": degraded_count,
         "time_in_critical_mode": critical_count,
         "mean_safety_margin_increase": _mean(safety_margin_values),
@@ -222,13 +298,12 @@ def dependability_metrics(rows):
 
 
 def radar_specific_metrics(rows):
-    """Radar-specific metrics: single-pass aggregation for performance."""
+    """Radar phenomenological metrics."""
     ghost_count = 0
     fragmentation_count = 0
     doppler_count = 0
     multipath_count = 0
     
-    # Single pass through all rows
     for r in rows:
         if r.get("ghost_track_flag"):
             ghost_count += 1
@@ -248,20 +323,7 @@ def radar_specific_metrics(rows):
 
 
 def _calibration_pairs(rows):
-    """Extracts (probability_of_detection, detected) pairs for confidence-
-    calibration analysis - see radar_like_model.calibration_pairs, which
-    this mirrors so the fusion-pipeline rows (which carry the same field
-    names) can be analyzed the same way without importing radar_like_model
-    here. Pairs the radar's own reported probability_of_detection for a
-    real target against whether it was actually detected, excluding
-    false-alarm/clutter rows, dropout rows, and hard range/FOV-gated
-    misses (radar_pd_miss_flag) - none of those outcomes were actually
-    determined by the PD roll, so pairing them in would make the check
-    tautological or contaminated rather than a real calibration signal.
-    confidence_score is deliberately not used here (see radar_like_model
-    for why: it's only ever present on rows already known, by
-    construction, to be a genuine detection or confirmed false alarm, so
-    calibrating it against that trivially-true label is uninformative)."""
+    """Extracts (probability_of_detection, detected) pairs."""
     pairs = []
     for r in rows:
         if r.get("false_alarm_flag") or r.get("dropout_flag") or r.get("radar_pd_miss_flag"):
@@ -277,8 +339,6 @@ def _calibration_pairs(rows):
 
 
 def _reliability_bins(pairs, num_bins=10):
-    """Buckets (confidence, correct) pairs into num_bins equal-width bins
-    over [0, 1], e.g. bin 7 of 10 holds confidences in [0.7, 0.8)."""
     bins = [[] for _ in range(num_bins)]
     for conf, correct in pairs:
         idx = min(int(conf * num_bins), num_bins - 1)
@@ -288,41 +348,14 @@ def _reliability_bins(pairs, num_bins=10):
 
 
 def confidence_calibration_metrics(rows, num_bins=10):
-    """Confidence-calibration metrics answering the core question: does a
-    reported radar detection probability of, say, 0.8 actually correspond
-    to about an 80% correct-detection frequency across repeated trials?
-    (See radar_like_model.calibration_pairs / _calibration_pairs above for
-    exactly which rows count and why confidence_score isn't the right
-    field to use here.)
-
-    Computes, over every (probability_of_detection, detected) pair found
-    in rows (see _calibration_pairs):
-      - expected_calibration_error (ECE): bin-count-weighted average gap
-        between each bin's mean confidence and its actual accuracy.
-      - maximum_calibration_error (MCE): the worst single-bin gap.
-      - brier_score: mean squared error between confidence and the
-        binary correctness outcome.
-      - negative_log_likelihood: mean binary log-loss of confidence as a
-        predicted probability of correctness.
-      - overconfidence_rate / underconfidence_rate: fraction of samples
-        falling in bins where confidence exceeds accuracy (overconfident)
-        or falls short of it (underconfident).
-      - reliability_bins: per-bin sample count, mean accuracy, mean
-        confidence, and confidence-minus-accuracy gap - the data behind a
-        reliability diagram.
-    """
     pairs = _calibration_pairs(rows)
     n = len(pairs)
     if n == 0:
         return {
-            "n_samples": 0,
-            "expected_calibration_error": None,
-            "maximum_calibration_error": None,
-            "brier_score": None,
-            "negative_log_likelihood": None,
-            "overconfidence_rate": None,
-            "underconfidence_rate": None,
-            "reliability_bins": [],
+            "n_samples": 0, "expected_calibration_error": None,
+            "maximum_calibration_error": None, "brier_score": None,
+            "negative_log_likelihood": None, "overconfidence_rate": None,
+            "underconfidence_rate": None
         }
 
     eps = 1e-7
@@ -336,15 +369,8 @@ def confidence_calibration_metrics(rows, num_bins=10):
     bins = _reliability_bins(pairs, num_bins)
     ece, mce = 0.0, 0.0
     overconfident_n, underconfident_n = 0, 0
-    reliability_bins = []
     for i, b in enumerate(bins):
-        lo, hi = i / num_bins, (i + 1) / num_bins
-        if not b:
-            reliability_bins.append({
-                "bin_range": [round(lo, 4), round(hi, 4)],
-                "n": 0, "bin_accuracy": None, "bin_confidence": None, "gap": None,
-            })
-            continue
+        if not b: continue
         bin_confidence = statistics.mean(c for c, _ in b)
         bin_accuracy = statistics.mean(1.0 if y else 0.0 for _, y in b)
         gap = bin_confidence - bin_accuracy
@@ -355,13 +381,6 @@ def confidence_calibration_metrics(rows, num_bins=10):
             overconfident_n += len(b)
         elif gap < 0:
             underconfident_n += len(b)
-        reliability_bins.append({
-            "bin_range": [round(lo, 4), round(hi, 4)],
-            "n": len(b),
-            "bin_accuracy": round(bin_accuracy, 4),
-            "bin_confidence": round(bin_confidence, 4),
-            "gap": round(gap, 4),
-        })
 
     return {
         "n_samples": n,
@@ -371,81 +390,90 @@ def confidence_calibration_metrics(rows, num_bins=10):
         "negative_log_likelihood": round(statistics.mean(nll_terms), 6),
         "overconfidence_rate": round(overconfident_n / n, 4),
         "underconfidence_rate": round(underconfident_n / n, 4),
-        "reliability_bins": reliability_bins,
     }
 
 
 def run_once(config, scenario_name, seed):
-    """Runs the full radar -> track -> fusion -> decision pipeline once
-    with the given seed and returns a flat metrics dict."""
+    """Runs the full pipeline once and returns a flat metrics dict."""
     run_config = copy.deepcopy(config)
     run_config["sim"]["seed"] = seed
 
     rows, metrics = run_radar_track_fusion_pipeline(run_config, scenario_name)
-    collision_risk_count = sum(1 for r in rows if r["collision_risk_flag"])
-    wrong_decisions = metrics["unnecessary_avoidance_count"] + metrics["missed_response_count"]
-    formation_errors = [r["formation_error"] for r in rows if r["formation_error"] is not None]
+    
+    # Swarm metric derivations
+    collision_count = sum(1 for r in rows if r.get("collision_flag"))
+    collision_risk_count = sum(1 for r in rows if r.get("collision_risk_flag"))
+    wrong_decisions = metrics.get("unnecessary_avoidance_count", 0) + metrics.get("missed_response_count", 0)
+    
+    formation_errors = [r["formation_error"] for r in rows if r.get("formation_error") is not None]
+    formation_error_rmse = _rmse_1d(formation_errors)
     swarm_stability = round(statistics.pstdev(formation_errors), 4) if len(formation_errors) > 1 else None
+    
+    min_separation = min((r["nearest_entity_distance"] for r in rows if r.get("nearest_entity_distance") is not None), default=None)
 
     out = {
         "seed": seed,
-        "total_near_misses": metrics["near_miss_count"],
+        "collision_count": collision_count,
+        "total_near_misses": metrics.get("near_miss_count", 0),
         "collision_risk_count": collision_risk_count,
-        "unnecessary_avoidance_count": metrics["unnecessary_avoidance_count"],
-        "missed_response_count": metrics["missed_response_count"],
-        "fusion_recovery_count": metrics["fusion_recovery_count"],
-        "mission_success": metrics["mission_success"],
-        "avg_response_time_s": metrics["avg_response_time_s"],
-        "avg_formation_error": metrics["avg_formation_error"],
-        "avg_confidence_error": metrics["avg_confidence_error"],
+        "minimum_separation": min_separation,
+        "unnecessary_avoidance_count": metrics.get("unnecessary_avoidance_count", 0),
+        "missed_response_count": metrics.get("missed_response_count", 0),
+        "hold_duration": metrics.get("hold_duration_steps", 0),
+        "fusion_recovery_count": metrics.get("fusion_recovery_count", 0),
+        "mission_success": metrics.get("mission_success", False),
+        "mission_completion_time_s": metrics.get("mission_completion_time_s"),
+        "avg_response_time_s": metrics.get("avg_response_time_s"),
+        "formation_error_rmse": formation_error_rmse,
+        "avg_confidence_error": metrics.get("avg_confidence_error"),
         "wrong_decisions": wrong_decisions,
         "swarm_stability": swarm_stability,
     }
+    
     out.update(perception_metrics(rows))
+    out.update(fusion_metrics(rows))
     out.update(communication_metrics(rows))
-
+    
     calibration = confidence_calibration_metrics(rows)
-    out.update({
-        "expected_calibration_error": calibration["expected_calibration_error"],
-        "maximum_calibration_error": calibration["maximum_calibration_error"],
-        "brier_score": calibration["brier_score"],
-        "negative_log_likelihood": calibration["negative_log_likelihood"],
-        "overconfidence_rate": calibration["overconfidence_rate"],
-        "underconfidence_rate": calibration["underconfidence_rate"],
-        "calibration_n_samples": calibration["n_samples"],
-    })
+    out.update(calibration)
     
-    dependability = dependability_metrics(rows)
-    out.update(dependability)
-    
-    radar_specific = radar_specific_metrics(rows)
-    out.update(radar_specific)
+    out.update(dependability_metrics(rows))
+    out.update(radar_specific_metrics(rows))
     
     return out
 
 
+# --- Field Name Definitions for CSV Export ---
 PERCEPTION_FIELDS = [
-    "rmse_position_error", "velocity_estimation_error", "track_continuity",
-    "track_fragmentation", "false_track_count", "missed_track_count",
-    "track_confirmation_time_steps", "track_loss_duration_steps",
-    "association_error_count", "average_covariance", "fusion_consistency_error",
+    "rmse_position_error", "velocity_rmse", "track_continuity",
+    "track_fragmentation", "false_detections", "missed_detections", 
+    "false_tracks", "missed_tracks", "track_confirmation_time_steps", 
+    "track_loss_duration_steps", "average_track_lifetime_steps",
+    "association_errors", "average_covariance",
+]
+FUSION_FIELDS = [
+    "fused_position_rmse", "covariance_consistency_nees", 
+    "avg_sensor_contribution", "stale_data_count", "avg_faulty_sensor_influence",
 ]
 COMMUNICATION_FIELDS = [
-    "messages_sent", "messages_dropped", "avg_message_delay_steps", "communication_load",
+    "messages_sent", "messages_received", "messages_dropped", "stale_messages",
+    "avg_message_delay_steps", "communication_load", "max_outage_duration_steps",
+    "avg_recovery_time_steps"
 ]
 SWARM_FIELDS = [
-    "collision_risk_count", "total_near_misses", "mission_success", "avg_response_time_s",
-    "avg_formation_error", "unnecessary_avoidance_count", "missed_response_count",
-    "wrong_decisions", "swarm_stability",
+    "collision_count", "total_near_misses", "collision_risk_count", "minimum_separation",
+    "mission_success", "mission_completion_time_s", "avg_response_time_s",
+    "formation_error_rmse", "unnecessary_avoidance_count", "missed_response_count",
+    "hold_duration", "wrong_decisions", "swarm_stability",
 ]
 CALIBRATION_FIELDS = [
     "expected_calibration_error", "maximum_calibration_error", "brier_score",
     "negative_log_likelihood", "overconfidence_rate", "underconfidence_rate",
-    "calibration_n_samples",
+    "n_samples",
 ]
 DEPENDABILITY_FIELDS = [
     "abstention_rate", "correct_abstention_rate", "unnecessary_abstention_rate",
-    "handoff_success_rate", "handoff_failure_rate", "mean_recovery_time_steps",
+    "handoff_success_rate", "handoff_failure_rate", 
     "time_in_degraded_mode", "time_in_critical_mode", "mean_safety_margin_increase",
 ]
 RADAR_SPECIFIC_FIELDS = [
@@ -478,11 +506,11 @@ def main():
     fieldnames = ([
         "scenario", "run_number", "fusion_mode", "false_positive_rate", "false_negative_rate",
         "noise_level", "latency_steps", "dropout_probability", "confidence_error_level",
-    ] + SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS
-      + DEPENDABILITY_FIELDS + RADAR_SPECIFIC_FIELDS)
+    ] + SWARM_FIELDS + PERCEPTION_FIELDS + FUSION_FIELDS + COMMUNICATION_FIELDS 
+      + CALIBRATION_FIELDS + DEPENDABILITY_FIELDS + RADAR_SPECIFIC_FIELDS)
 
     rows = []
-    scenario_runs = {}  # scenario_name -> list of per-run metric dicts, for the console summary
+    scenario_runs = {} 
 
     total_runs = len(scenario_names) * args.runs
     done = 0
@@ -507,9 +535,12 @@ def main():
                 **params,
                 "mission_success": "Yes" if m["mission_success"] else "No",
             }
-            for key in SWARM_FIELDS + PERCEPTION_FIELDS + COMMUNICATION_FIELDS + CALIBRATION_FIELDS + DEPENDABILITY_FIELDS + RADAR_SPECIFIC_FIELDS:
+            
+            for key in (SWARM_FIELDS + PERCEPTION_FIELDS + FUSION_FIELDS + 
+                        COMMUNICATION_FIELDS + CALIBRATION_FIELDS + 
+                        DEPENDABILITY_FIELDS + RADAR_SPECIFIC_FIELDS):
                 if key != "mission_success":
-                    row[key] = m[key]
+                    row[key] = m.get(key)
             rows.append(row)
 
         scenario_runs[scenario_name] = run_metrics_list
@@ -525,14 +556,13 @@ def main():
 
     for scenario_name, run_metrics_list in scenario_runs.items():
         n = len(run_metrics_list)
-        success_rate = sum(1 for m in run_metrics_list if m["mission_success"]) / n
+        success_rate = sum(1 for m in run_metrics_list if m.get("mission_success")) / n
         print(f"[{scenario_name}] runs={n}  mission_success_rate={success_rate:.0%}  "
-              f"avg_collision_risk={_mean(m['collision_risk_count'] for m in run_metrics_list)}  "
-              f"avg_rmse_position={_mean(m['rmse_position_error'] for m in run_metrics_list)}  "
-              f"avg_track_continuity={_mean(m['track_continuity'] for m in run_metrics_list)}  "
-              f"avg_messages_sent={_mean(m['messages_sent'] for m in run_metrics_list)}  "
-              f"avg_ece={_mean(m['expected_calibration_error'] for m in run_metrics_list)}  "
-              f"avg_brier={_mean(m['brier_score'] for m in run_metrics_list)}")
+              f"avg_collision_count={_mean(m.get('collision_count') for m in run_metrics_list)}  "
+              f"avg_fused_rmse={_mean(m.get('fused_position_rmse') for m in run_metrics_list)}  "
+              f"avg_rmse_position={_mean(m.get('rmse_position_error') for m in run_metrics_list)}  "
+              f"avg_track_continuity={_mean(m.get('track_continuity') for m in run_metrics_list)}  "
+              f"avg_messages_sent={_mean(m.get('messages_sent') for m in run_metrics_list)}")
 
 
 if __name__ == "__main__":
