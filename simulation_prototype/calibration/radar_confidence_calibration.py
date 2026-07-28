@@ -81,6 +81,10 @@ import math
 import os
 import sys
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import numpy as np
 from scipy.optimize import minimize_scalar
 import matplotlib
@@ -89,7 +93,7 @@ import matplotlib.pyplot as plt
 
 from models.radar_like_model import RadarLikeModel
 from metrics_analysis import _calibration_pairs, confidence_calibration_metrics
-from radar_calibration_analysis import _pairs_to_rows
+from calibration.radar_calibration_analysis import _pairs_to_rows
 
 EPS = 1e-7
 METHOD_NAMES = ("uncalibrated", "temperature_scaling", "histogram_binning", "isotonic")
@@ -401,7 +405,7 @@ def main():
         description="Fits and compares radar probability_of_detection calibration methods "
                     "(temperature scaling, histogram binning, isotonic) against the raw, "
                     "uncalibrated confidence, evaluated on a held-out simulation subset.")
-    parser.add_argument("--config", default="simulation_config.json")
+    parser.add_argument("--config", default=os.path.join(PROJECT_ROOT, "simulation_config.json"))
     parser.add_argument("--scenario", default=None, help="Only analyze this one scenario")
     parser.add_argument("--calib-runs", type=int, default=20,
                         help="Seeded runs used to fit calibration methods")
@@ -410,8 +414,8 @@ def main():
     parser.add_argument("--bins", type=int, default=10, help="Number of reliability bins")
     parser.add_argument("--no-isotonic", action="store_true",
                         help="Skip isotonic calibration (methods 1-3 only)")
-    parser.add_argument("--output", default="results/radar_confidence_calibration.json")
-    parser.add_argument("--plot-dir", default="results/reliability_diagrams")
+    parser.add_argument("--output", default=os.path.join(PROJECT_ROOT, "results", "radar_confidence_calibration.json"))
+    parser.add_argument("--plot-dir", default=os.path.join(PROJECT_ROOT, "results", "reliability_diagrams"))
     args = parser.parse_args()
 
     if args.calib_runs < 1 or args.eval_runs < 1:

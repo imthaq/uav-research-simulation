@@ -20,7 +20,7 @@ fraction of degraded/critical-perception steps left unmitigated (no abstention) 
 
 ## no_handoff_vs_handoff
 
-Not implemented: no "handoff" concept exists in this codebase to compare. See no_handoff_vs_handoff/handoff_stub.json for a proposed definition.
+Handoff mechanism implemented: The handoff concept is now fully implemented in `dependability/perception_handoff_model.py`. It acts as an arbiter for track-sourcing based on seven specific triggers to ensure safe fallback during degraded perception.
 
 ## centralized_vs_distributed_fusion
 

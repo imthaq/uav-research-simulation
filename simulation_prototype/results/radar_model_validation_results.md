@@ -2,7 +2,7 @@
 
 Controlled, hand-computable checks of the core radar equations in `models/radar_like_model.py` (range/bearing/radial-velocity conversion, noise, P_D/P_FA, clutter, range-dependent SNR) - not the full swarm simulation, just the radar-domain math.
 
-**Result: 52/52 checks passed** — all green
+**Result: 57/57 checks passed** — all green
 
 ## Summary by task
 
@@ -19,6 +19,8 @@ Controlled, hand-computable checks of the core radar equations in `models/radar_
 | pfa_behavior | 6/6 |
 | poisson_clutter_behavior | 6/6 |
 | range_dependent_snr | 9/9 |
+| radar_latency | 3/3 |
+| radar_dropout | 2/2 |
 
 ## Detailed results
 
@@ -76,3 +78,8 @@ Controlled, hand-computable checks of the core radar equations in `models/radar_
 | PASS | range_dependent_snr | SNR is None for non-positive/unknown range |  |
 | PASS | range_dependent_snr | measurement quality rises monotonically with SNR and stays in [0, 1] | qualities=[0.0099, 0.2403, 0.5, 0.7597, 0.9901, 1.0] |
 | PASS | range_dependent_snr | quality at SNR=0 dB is exactly 0.5 (SNR/(SNR+1) with linear SNR=1) | got 0.5 |
+| PASS | radar_latency | At t=0 with latency=2, scan from t=0 is not returned |  |
+| PASS | radar_latency | At t=1 with latency=2, scan from t=0 is not returned |  |
+| PASS | radar_latency | At t=2 with latency=2, scan from t=0 is returned |  |
+| PASS | radar_dropout | Dropout probability=1.0 always drops |  |
+| PASS | radar_dropout | Dropout probability=0.0 never drops |  |

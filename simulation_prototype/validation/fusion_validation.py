@@ -286,6 +286,19 @@ def test_covariance_intersection_correlated():
           ci3["position_variance"] > individual_trace / 2.0, f"got {ci3['position_variance']}")
 
 
+# ---------------------------------------------------------------------
+# 8. Missing sensor handling
+# ---------------------------------------------------------------------
+def test_missing_sensor_handling():
+    # Only one sensor reports a track.
+    sensor_a = source("A", "r1", 5.0, 5.0)
+    group = [sensor_a]
+    for mode in ALL_MODES:
+        result = fuse_group(group, mode)
+        check("missing_sensor_handling", f"[{mode}] fuses correctly when only one sensor is present (no crash)",
+              result is not None and close(result["x"], 5.0, tol=1e-6))
+
+
 def main():
     test_identical_measurements()
     test_radar_more_accurate_than_vision()
@@ -294,6 +307,7 @@ def main():
     test_high_confidence_incorrect_measurement()
     test_one_sensor_dropout()
     test_covariance_intersection_correlated()
+    test_missing_sensor_handling()
 
     failed = _checker.print_summary()
 

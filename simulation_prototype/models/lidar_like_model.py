@@ -86,8 +86,15 @@ class LiDARLikeModel:
                                   lidar_cfg.get("lidar_update_rate", self.DEFAULT_UPDATE_RATE))
         self.update_interval_steps = (
             max(1, round(1.0 / (self.update_rate * self.dt))) if self.update_rate > 0 else 1)
+        
+        self.latency_steps = scn.get("lidar_latency_steps",
+                                     lidar_cfg.get("lidar_latency_steps", 0))
+
         self._held_rows = {}
         self._held_step = {}
+        
+        # Buffer for latency delays
+        self._scan_buffer = {i: [] for i in range(self.sim.num_uavs)}
 
         self.rows = []
     
@@ -95,9 +102,10 @@ class LiDARLikeModel:
         """Range + position covariance (accurate for LiDAR)."""
         env_mult = self._env_factors["noise_mult"]
         rel_mult = self._reliability_factors["noise_mult"]
+        range_factor = max(0.1, true_range / self.max_range)
         
-        range_var = (self.range_noise_std * env_mult * rel_mult) ** 2
-        pos_var = (self.position_noise_std * env_mult * rel_mult) ** 2
+        range_var = (self.range_noise_std * env_mult * rel_mult * range_factor) ** 2
+        pos_var = (self.position_noise_std * env_mult * rel_mult * range_factor) ** 2
         ang_var = (self.angular_noise_std * env_mult * rel_mult) ** 2
         
         # Covariance: [range_var, position_var_xy, angular_var]
@@ -171,102 +179,113 @@ class LiDARLikeModel:
                 if self.sim.reached_goal[uav_id]:
                     continue
 
-                # Asynchronous update rate: only generate a fresh LiDAR
-                # scan on steps due for one; otherwise re-serve the last
-                # generated scan, stamped stale with its growing age.
-                if t % self.update_interval_steps != 0:
-                    held = self._held_rows.get(uav_id)
-                    if held is not None:
-                        gen_t = self._held_step[uav_id]
-                        for row in held:
-                            stale_row = dict(row)
-                            stale_row["time_step"] = t
-                            stale_row["measurement_age_steps"] = t - gen_t
-                            stale_row["is_stale"] = True
-                            self.rows.append(stale_row)
-                    continue
+                if t % self.update_interval_steps == 0:
+                    uav_pos = self.sim.pos[uav_id]
+                    heading = self._heading(uav_id, uav_pos)
+                    true_dets = self.sim._true_detections_for(uav_id)
+                    frame_rows = []
 
-                uav_pos = self.sim.pos[uav_id]
-                heading = self._heading(uav_id, uav_pos)
-                
-                # Get true detections
-                true_dets = self.sim._true_detections_for(uav_id)
-
-                frame_rows = []
-
-                # Check for scan-level dropout first (weather or hardware)
-                if weather_dropout:
-                    # Report all true targets as undetected due to weather
-                    for true_det in true_dets:
-                        frame_rows.append(self._make_lidar_row(
-                            t, uav_id, true_det, None, None, None, None,
-                            uav_pos, None, None, False, "weather_dropout"))
-                    self._held_rows[uav_id] = frame_rows
-                    self._held_step[uav_id] = t
-                    self.rows.extend(frame_rows)
-                    continue
-                
-                # Process real targets in range/FOV
-                for true_det in true_dets:
-                    tx, ty = true_det["x"], true_det["y"]
-                    dx, dy = tx - uav_pos[0], ty - uav_pos[1]
-                    true_range = math.hypot(dx, dy)
-                    
-                    # Range gate (LiDAR has both min and max range)
-                    if true_range > self.max_range or true_range < self.min_range:
-                        frame_rows.append(self._make_lidar_row(
-                            t, uav_id, true_det, None, None, None, None,
-                            uav_pos, None, None, False, "range_gate"))
-                        continue
-                    
-                    # FOV check (if configured)
-                    if self.fov_deg < 360:
-                        true_bearing = math.atan2(dy, dx)
-                        angle_diff = abs(_wrap_angle(true_bearing - heading))
-                        if angle_diff > half_fov:
+                    # Check for scan-level dropout first (weather or hardware)
+                    if weather_dropout:
+                        # Report all true targets as undetected due to weather
+                        for true_det in true_dets:
                             frame_rows.append(self._make_lidar_row(
                                 t, uav_id, true_det, None, None, None, None,
-                                uav_pos, None, None, False, "fov_gate"))
-                            continue
-                    
-                    # Detection roll (range-independent but environment/reliability modulated)
-                    pd_eff = (self.pd * 
-                             self._env_factors["pd_mult"] * 
-                             self._reliability_factors["pd_mult"])
-                    
-                    if self.lidar_rng.random() > pd_eff:
-                        frame_rows.append(self._make_lidar_row(
-                            t, uav_id, true_det, None, None, None, None,
-                            uav_pos, None, None, False, "detection_miss"))
-                        continue
-                    
-                    # Measurement: range + bearing (converted to x/y)
-                    true_bearing = math.atan2(dy, dx)
-                    
-                    # Noise: range and bearing independently
-                    meas_range = max(self.min_range, 
-                                    true_range + self.lidar_rng.gauss(0, self.range_noise_std))
-                    meas_bearing = true_bearing + self.lidar_rng.gauss(0, self.angular_noise_std)
-                    
-                    # Convert to x/y
-                    meas_x = uav_pos[0] + meas_range * math.cos(meas_bearing)
-                    meas_y = uav_pos[1] + meas_range * math.sin(meas_bearing)
-                    
-                    # Add position noise independently (LiDAR gives accurate range + position)
-                    meas_x += self.lidar_rng.gauss(0, self.position_noise_std)
-                    meas_y += self.lidar_rng.gauss(0, self.position_noise_std)
-                    
-                    # High confidence for LiDAR (range-independent)
-                    confidence = 0.94 * pd_eff
-                    covariance = self._compute_covariance(true_range)
-                    
-                    frame_rows.append(self._make_lidar_row(
-                        t, uav_id, true_det, meas_x, meas_y, meas_range, meas_bearing,
-                        uav_pos, confidence, covariance, True))
+                                uav_pos, None, None, False, "weather_dropout"))
+                    else:
+                        # Process real targets in range/FOV
+                        for true_det in true_dets:
+                            tx, ty = true_det["x"], true_det["y"]
+                            dx, dy = tx - uav_pos[0], ty - uav_pos[1]
+                            true_range = math.hypot(dx, dy)
+                            
+                            # Range gate (LiDAR has both min and max range)
+                            if true_range > self.max_range or true_range < self.min_range:
+                                frame_rows.append(self._make_lidar_row(
+                                    t, uav_id, true_det, None, None, None, None,
+                                    uav_pos, None, None, False, "range_gate"))
+                                continue
+                            
+                            # FOV check (if configured)
+                            if self.fov_deg < 360:
+                                true_bearing = math.atan2(dy, dx)
+                                angle_diff = abs(_wrap_angle(true_bearing - heading))
+                                if angle_diff > half_fov:
+                                    frame_rows.append(self._make_lidar_row(
+                                        t, uav_id, true_det, None, None, None, None,
+                                        uav_pos, None, None, False, "fov_gate"))
+                                    continue
+                            
+                            # Detection roll (range-independent but environment/reliability modulated)
+                            pd_eff = (self.pd * 
+                                     self._env_factors["pd_mult"] * 
+                                     self._reliability_factors["pd_mult"])
+                            
+                            if self.lidar_rng.random() > pd_eff:
+                                frame_rows.append(self._make_lidar_row(
+                                    t, uav_id, true_det, None, None, None, None,
+                                    uav_pos, None, None, False, "detection_miss"))
+                                continue
+                            
+                            # Measurement: range + bearing (converted to x/y)
+                            true_bearing = math.atan2(dy, dx)
+                            
+                            # Noise: range and bearing independently
+                            range_factor = max(0.1, true_range / self.max_range)
+                            meas_range = max(self.min_range, 
+                                            true_range + self.lidar_rng.gauss(0, self.range_noise_std * range_factor))
+                            meas_bearing = true_bearing + self.lidar_rng.gauss(0, self.angular_noise_std)
+                            
+                            # Convert to x/y
+                            meas_x = uav_pos[0] + meas_range * math.cos(meas_bearing)
+                            meas_y = uav_pos[1] + meas_range * math.sin(meas_bearing)
+                            
+                            # Add position noise independently (LiDAR gives accurate range + position)
+                            meas_x += self.lidar_rng.gauss(0, self.position_noise_std)
+                            meas_y += self.lidar_rng.gauss(0, self.position_noise_std)
+                            
+                            # High confidence for LiDAR (range-independent)
+                            confidence = 0.94 * pd_eff
+                            covariance = self._compute_covariance(true_range)
+                            
+                            frame_rows.append(self._make_lidar_row(
+                                t, uav_id, true_det, meas_x, meas_y, meas_range, meas_bearing,
+                                uav_pos, confidence, covariance, True))
 
-                self._held_rows[uav_id] = frame_rows
-                self._held_step[uav_id] = t
-                self.rows.extend(frame_rows)
+                    self._scan_buffer[uav_id].append((t, frame_rows))
+
+                # Process delayed frames
+                ready_frame = None
+                cutoff = t - self.latency_steps
+                
+                buf = self._scan_buffer[uav_id]
+                idx_to_remove = -1
+                for idx, (gen_t, f_rows) in enumerate(buf):
+                    if gen_t <= cutoff:
+                        ready_frame = (gen_t, f_rows)
+                        idx_to_remove = idx
+                    else:
+                        break
+                
+                if idx_to_remove >= 0:
+                    self._scan_buffer[uav_id] = buf[idx_to_remove+1:]
+                
+                if ready_frame:
+                    gen_t, f_rows = ready_frame
+                    self._held_rows[uav_id] = f_rows
+                    self._held_step[uav_id] = gen_t
+                
+                # Report held frame
+                held = self._held_rows.get(uav_id)
+                if held is not None:
+                    gen_t = self._held_step[uav_id]
+                    for row in held:
+                        out_row = dict(row)
+                        out_row["time_step"] = t
+                        out_row["timestamp"] = gen_t
+                        out_row["measurement_age_steps"] = t - gen_t
+                        out_row["is_stale"] = out_row["measurement_age_steps"] > 0
+                        self.rows.append(out_row)
 
         return self.rows
 

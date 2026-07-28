@@ -542,7 +542,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "perfect"
+        "preset": "perfect",
+        "architecture": "distributed"
       }
     },
     "low_packet_loss": {
@@ -552,7 +553,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "low_packet_loss"
+        "preset": "low_packet_loss",
+        "architecture": "distributed"
       }
     },
     "high_packet_loss": {
@@ -562,7 +564,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "high_packet_loss"
+        "preset": "high_packet_loss",
+        "architecture": "distributed"
       }
     },
     "short_communication_range": {
@@ -572,7 +575,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "short_range"
+        "preset": "short_range",
+        "architecture": "distributed"
       }
     },
     "delayed_track_sharing": {
@@ -582,7 +586,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "delayed_sharing"
+        "preset": "delayed_sharing",
+        "architecture": "distributed"
       }
     },
     "communication_outage": {
@@ -592,7 +597,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "outage"
+        "preset": "outage",
+        "architecture": "distributed"
       }
     },
     "faulty_sensor_naive_fusion": {
@@ -766,7 +772,7 @@
       "fusion_mode": "trust_weighted_fusion",
       "radar_detection_probability": 1.0,
       "radar_false_alarm_probability": 0.4,
-      "radar_clutter_density": 0.0,
+      "radar_clutter_density": 0.5,
       "radar_dropout_probability": 0.0,
       "radar_latency_steps": 0,
       "position_noise_std": 0.0,
@@ -780,7 +786,7 @@
       "description": "Radar clutter density = 0.5 (heavy environmental interference)",
       "fusion_mode": "trust_weighted_fusion",
       "radar_detection_probability": 1.0,
-      "radar_false_alarm_probability": 0.0,
+      "radar_false_alarm_probability": 0.05,
       "radar_clutter_density": 0.5,
       "radar_dropout_probability": 0.0,
       "radar_latency_steps": 0,

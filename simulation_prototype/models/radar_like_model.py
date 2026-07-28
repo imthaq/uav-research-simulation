@@ -621,6 +621,7 @@ class RadarLikeModel:
         self._held_perceived = {i: [] for i in range(self.sim.num_uavs)}
         self._held_dropout = {i: False for i in range(self.sim.num_uavs)}
         self._held_pd_missed = {i: [] for i in range(self.sim.num_uavs)}
+        self._held_gen_t = {i: 0 for i in range(self.sim.num_uavs)}
         self._current_t = 0
 
         self._patch_perception()
@@ -957,7 +958,7 @@ class RadarLikeModel:
         used_idx = None
         for idx, (gen_t, scan, dropout, pd_missed_ids) in enumerate(buf):
             if gen_t <= cutoff:
-                used = (scan, dropout, pd_missed_ids)
+                used = (scan, dropout, pd_missed_ids, gen_t)
                 used_idx = idx
             else:
                 break
@@ -1282,10 +1283,11 @@ class RadarLikeModel:
                 delayed = self._get_delayed_scan(_uav_id, t)
                 if delayed is not None:
                     (self._held_perceived[_uav_id], self._held_dropout[_uav_id],
-                     self._held_pd_missed[_uav_id]) = delayed
+                     self._held_pd_missed[_uav_id], self._held_gen_t[_uav_id]) = delayed
 
                 perceived_out = [dict(d) for d in self._held_perceived[_uav_id]]
                 dropout_out = self._held_dropout[_uav_id] or _perc.last_dropout
+                gen_t_out = self._held_gen_t.get(_uav_id, t)
 
                 self._capture[_uav_id] = {
                     "true_dets": true_snapshot,
@@ -1293,6 +1295,7 @@ class RadarLikeModel:
                     "dropout": dropout_out,
                     "observer_pos": tuple(uav_pos),
                     "pd_missed_ids": self._held_pd_missed[_uav_id],
+                    "gen_t": gen_t_out,
                 }
                 return perceived_out
 
@@ -1350,7 +1353,7 @@ class RadarLikeModel:
     def _make_row(self, t, uav_id, true_det, measured_det, observer_pos,
                   observer_vel, uav_vel, status,
                   false_alarm=False, missed=False, dropout=False,
-                  radar_pd_miss=False, clutter=False, extended_return=False):
+                  radar_pd_miss=False, clutter=False, extended_return=False, gen_t=None):
         target_id = true_det["id"] if true_det is not None else (
             measured_det.get("id") if measured_det is not None and measured_det.get("id") != "phantom"
             else None
@@ -1447,8 +1450,14 @@ class RadarLikeModel:
         is_valid = measured_det is not None and not dropout
         sensor_reliability = measurement_quality if measurement_quality is not None else 0.0
         
+        measurement_age_steps = (t - gen_t) if gen_t is not None else 0
+        is_stale = measurement_age_steps > 0
+        
         return {
             "time_step": t,
+            "timestamp": gen_t if gen_t is not None else t,
+            "measurement_age_steps": measurement_age_steps,
+            "is_stale": is_stale,
             "radar_id": uav_id,
             "target_id": target_id,
             "true_target_x": round(true_x, 4) if true_x is not None else None,
@@ -1547,11 +1556,11 @@ class RadarLikeModel:
                     for d in true_dets:
                         self.rows.append(self._make_row(
                             t, uav_id, d, None, observer_pos, observer_vel,
-                            uav_vel, status="dropout", missed=True, dropout=True))
+                            uav_vel, status="dropout", missed=True, dropout=True, gen_t=cap.get("gen_t")))
                 else:
                     self.rows.append(self._make_row(
                         t, uav_id, None, None, observer_pos, observer_vel,
-                        uav_vel, status="dropout", missed=True, dropout=True))
+                        uav_vel, status="dropout", missed=True, dropout=True, gen_t=cap.get("gen_t")))
                 continue
 
             # A detection is a false alarm if it's the legacy config-driven
@@ -1575,18 +1584,18 @@ class RadarLikeModel:
                 if meas is not None:
                     self.rows.append(self._make_row(
                         t, uav_id, d, meas, observer_pos, observer_vel,
-                        uav_vel, status="detected"))
+                        uav_vel, status="detected", gen_t=cap.get("gen_t")))
                 else:
                     self.rows.append(self._make_row(
                         t, uav_id, d, None, observer_pos, observer_vel,
                         uav_vel, status="missed", missed=True,
-                        radar_pd_miss=(d["id"] in pd_missed_ids)))
+                        radar_pd_miss=(d["id"] in pd_missed_ids), gen_t=cap.get("gen_t")))
 
             for fd in false_alarm_dets:
                 self.rows.append(self._make_row(
                     t, uav_id, None, fd, observer_pos, observer_vel,
                     uav_vel, status="false_alarm", false_alarm=True,
-                    clutter=bool(fd.get("is_radar_clutter"))))
+                    clutter=bool(fd.get("is_radar_clutter")), gen_t=cap.get("gen_t")))
 
             # Task 8: extended-target radar returns - each extra return
             # generated in _generate_extended_returns gets its own row,
@@ -1605,7 +1614,7 @@ class RadarLikeModel:
                     parent_true = true_lookup.get(d.get("parent_target_id"))
                     row = self._make_row(
                         t, uav_id, parent_true, d, observer_pos, observer_vel,
-                        uav_vel, status="detected", extended_return=True)
+                        uav_vel, status="detected", extended_return=True, gen_t=cap.get("gen_t"))
                     row["target_id"] = d["id"]
                     self.rows.append(row)
 

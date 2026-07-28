@@ -1158,7 +1158,11 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
     """
     from models.radar_like_model import RadarLikeModel, _range_bearing_radial
     from tracking.radar_track_model import RadarTracker
-    from fusion.fusion_model import fuse_step, TrustTracker
+    from fusion.fusion_model import (
+        fuse_step, TrustTracker, ARCHITECTURE_CENTRALIZED, ARCHITECTURE_DISTRIBUTED,
+        CENTRAL_UPLINK_LATENCY_STEPS, CENTRAL_DOWNLINK_LATENCY_STEPS,
+    )
+    import models.communication_model
 
     model = RadarLikeModel(config, scenario_name)
     sim = model.sim
@@ -1178,6 +1182,34 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
     # build_fused_log; defaults on.
     trust_cfg = sim.scn.get("trust_adaptation", config.get("trust_adaptation", {}))
     trust_tracker = TrustTracker() if trust_cfg.get("enabled", True) else None
+
+    # Bug fix: this live decision loop used to call fuse_step() with no
+    # architecture/channel at all, which silently defaults to
+    # ARCHITECTURE_CENTRALIZED with default uplink/downlink latency only.
+    # Centralized fusion never consumes packet_loss_probability/comm_range/
+    # corruption_probability - only the distributed channel does (see
+    # fuse_distributed) - so every "communication" scenario config
+    # (perfect_communication, low_packet_loss, high_packet_loss,
+    # communication_outage, short_communication_range,
+    # delayed_track_sharing, ...) was silently ignored here even though
+    # CommunicationChannel itself is correct in isolation (see
+    # communication_model_validation.py). Mirrors build_fused_log's own
+    # architecture/channel resolution in fusion_model.py so both the
+    # offline evaluation path and this live path honor the same config.
+    comm_cfg = sim.scn.get("communication", config.get("communication", {}))
+    architecture = comm_cfg.get("architecture", config.get("architecture", ARCHITECTURE_CENTRALIZED))
+    if architecture not in (ARCHITECTURE_CENTRALIZED, ARCHITECTURE_DISTRIBUTED):
+        architecture = ARCHITECTURE_CENTRALIZED
+    architecture_kwargs = {}
+    if architecture == ARCHITECTURE_DISTRIBUTED:
+        architecture_kwargs["channel"] = models.communication_model.from_config(
+            comm_cfg, rng=random.Random(sim.rng.randint(0, 2 ** 31 - 1)))
+    else:
+        architecture_kwargs["max_staleness_steps"] = comm_cfg.get("max_staleness_steps")
+        architecture_kwargs["uplink_latency_steps"] = comm_cfg.get(
+            "central_uplink_latency_steps", CENTRAL_UPLINK_LATENCY_STEPS)
+        architecture_kwargs["downlink_latency_steps"] = comm_cfg.get(
+            "central_downlink_latency_steps", CENTRAL_DOWNLINK_LATENCY_STEPS)
 
     t = 0
     for t in range(sim.max_steps):
@@ -1229,14 +1261,29 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
 
         # 7: fuse this step's obstacle tracks across UAVs.
         fused_clusters = fuse_step(list(obstacle_track_row_by_uav.values()), fusion_mode,
-                                    trust_tracker=trust_tracker)
+                                    architecture=architecture, trust_tracker=trust_tracker,
+                                    **architecture_kwargs)
         track_id_to_uav = {tid: uav for uav, tid in obstacle_track_id.items()}
         fused_by_uav = {}
-        for cluster in fused_clusters:
-            for tid in cluster["source_ids"]:
-                uav = track_id_to_uav.get(tid)
+        if architecture == ARCHITECTURE_DISTRIBUTED:
+            # fuse_distributed already returns one row per (receiving UAV,
+            # fused object), each carrying its own local_uav_id - so each
+            # row maps to exactly one UAV directly. Expanding via
+            # source_ids (like the centralized branch below) would be
+            # wrong here: it would hand a receiver's local fused view to
+            # every peer whose track happened to be folded into it too.
+            for cluster in fused_clusters:
+                uav = cluster.get("local_uav_id")
                 if uav is not None:
                     fused_by_uav[uav] = cluster
+        else:
+            # Centralized: one shared row per object, no local_uav_id -
+            # broadcast it out to every UAV that contributed a source.
+            for cluster in fused_clusters:
+                for tid in cluster["source_ids"]:
+                    uav = track_id_to_uav.get(tid)
+                    if uav is not None:
+                        fused_by_uav[uav] = cluster
 
         # 8-9: hand last step's fused estimate to decision-making, move,
         # then hand this step's estimate off for next step.

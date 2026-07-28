@@ -2,7 +2,7 @@
 
 Controlled checks of the multi-source weighting math in `fusion/fusion_model.py` (`_as_source`, `fuse_group`, `fuse_centralized`) - hand-built radar-track-shaped rows fed straight into fusion, not the full radar+tracker+fusion pipeline.
 
-**Result: 38/38 checks passed** — all green
+**Result: 43/43 checks passed** — all green
 
 ## Summary by task
 
@@ -15,6 +15,7 @@ Controlled checks of the multi-source weighting math in `fusion/fusion_model.py`
 | high_confidence_incorrect | 3/3 |
 | one_sensor_dropout | 5/5 |
 | covariance_intersection_correlated | 5/5 |
+| missing_sensor_handling | 5/5 |
 
 ## Detailed results
 
@@ -58,3 +59,8 @@ Controlled checks of the multi-source weighting math in `fusion/fusion_model.py`
 | PASS | covariance_intersection_correlated | CI's fused variance is no larger than either individual source's (effective) variance - still informative | CI_var=8.0 individual_trace=8.0 |
 | PASS | covariance_intersection_correlated | naive information fusion (assumes independence) halves the trace for two equal sources | got 4.0 vs expected 4.0 |
 | PASS | covariance_intersection_correlated | CI's fused variance for several identical, fully-correlated sources stays close to the single-source variance | got 8.0 |
+| PASS | missing_sensor_handling | [naive_fusion] fuses correctly when only one sensor is present (no crash) |  |
+| PASS | missing_sensor_handling | [confidence_weighted_fusion] fuses correctly when only one sensor is present (no crash) |  |
+| PASS | missing_sensor_handling | [trust_weighted_fusion] fuses correctly when only one sensor is present (no crash) |  |
+| PASS | missing_sensor_handling | [covariance_weighted_fusion] fuses correctly when only one sensor is present (no crash) |  |
+| PASS | missing_sensor_handling | [covariance_intersection_fusion] fuses correctly when only one sensor is present (no crash) |  |

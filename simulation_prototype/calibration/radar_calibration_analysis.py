@@ -41,6 +41,10 @@ import json
 import os
 import sys
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from models.radar_like_model import RadarLikeModel, calibration_pairs
 from metrics_analysis import confidence_calibration_metrics
 
@@ -119,12 +123,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Radar confidence-calibration analysis: checks whether reported "
                     "radar confidence matches actual correct-detection frequency.")
-    parser.add_argument("--config", default="simulation_prototype/simulation_config.json")
+    parser.add_argument("--config", default=os.path.join(PROJECT_ROOT, "simulation_config.json"))
     parser.add_argument("--scenario", default=None, help="Only analyze this one scenario")
     parser.add_argument("--runs", type=int, default=20,
                         help="Seeded runs per scenario, pooled for more calibration samples")
     parser.add_argument("--bins", type=int, default=10, help="Number of reliability bins")
-    parser.add_argument("--output", default="results/radar_calibration.json")
+    parser.add_argument("--output", default=os.path.join(PROJECT_ROOT, "results", "radar_calibration.json"))
     args = parser.parse_args()
 
     if args.runs < 1:

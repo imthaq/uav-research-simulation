@@ -82,10 +82,19 @@ class VisionLikeModel:
                                   vision_cfg.get("vision_update_rate", self.DEFAULT_UPDATE_RATE))
         self.update_interval_steps = (
             max(1, round(1.0 / (self.update_rate * self.dt))) if self.update_rate > 0 else 1)
+        
+        self.latency_steps = scn.get("vision_latency_steps",
+                                     vision_cfg.get("vision_latency_steps", 0))
+        self.dropout_probability = scn.get("vision_dropout_probability",
+                                           vision_cfg.get("vision_dropout_probability", 0.0))
+
         # Per-UAV hold buffer: (last generated step, list of rows produced
         # that step) - re-served on steps that fall between updates.
         self._held_rows = {}
         self._held_step = {}
+        
+        # Buffer for latency delays
+        self._scan_buffer = {i: [] for i in range(self.sim.num_uavs)}
 
         self.rows = []
     
@@ -172,100 +181,120 @@ class VisionLikeModel:
                 if self.sim.reached_goal[uav_id]:
                     continue
 
-                # Asynchronous update rate: only generate a fresh vision
-                # frame on steps due for one; otherwise re-serve the last
-                # generated frame, stamped stale with its growing age.
-                if t % self.update_interval_steps != 0:
-                    held = self._held_rows.get(uav_id)
-                    if held is not None:
-                        gen_t = self._held_step[uav_id]
-                        for row in held:
-                            stale_row = dict(row)
-                            stale_row["time_step"] = t
-                            stale_row["measurement_age_steps"] = t - gen_t
-                            stale_row["is_stale"] = True
-                            self.rows.append(stale_row)
-                    continue
+                if t % self.update_interval_steps == 0:
+                    uav_pos = self.sim.pos[uav_id]
+                    heading = self._heading(uav_id, uav_pos)
+                    true_dets = self.sim._true_detections_for(uav_id)
+                    frame_rows = []
+                    
+                    dropout = self.vision_rng.random() < self.dropout_probability
+                    
+                    if dropout:
+                        # Empty frame due to dropout
+                        pass
+                    else:
+                        # Process real targets in FOV
+                        for true_det in true_dets:
+                            tx, ty = true_det["x"], true_det["y"]
+                            dx, dy = tx - uav_pos[0], ty - uav_pos[1]
+                            true_range = math.hypot(dx, dy)
+                            
+                            # Range gate
+                            if true_range > self.max_range or true_range < 0.1:
+                                frame_rows.append(self._make_vision_row(
+                                    t, uav_id, true_det, None, None, None,
+                                    uav_pos, None, None, False, False))
+                                continue
+                            
+                            # FOV check (symmetric around heading)
+                            true_bearing = math.atan2(dy, dx)
+                            angle_diff = abs(_wrap_angle(true_bearing - heading))
+                            if angle_diff > half_fov:
+                                frame_rows.append(self._make_vision_row(
+                                    t, uav_id, true_det, None, None, None,
+                                    uav_pos, None, None, False, False))
+                                continue
+                            
+                            # Occlusion (random)
+                            if self.vision_rng.random() < 0.08:
+                                frame_rows.append(self._make_vision_row(
+                                    t, uav_id, true_det, None, None, None,
+                                    uav_pos, None, None, False, False))
+                                continue
+                            
+                            # Detection roll (range-dependent, environment/reliability modulated)
+                            range_factor = max(0.3, 1.0 - (true_range / self.max_range) ** 2)
+                            snr_factor = range_factor
+                            pd_eff = (self.pd * range_factor * lighting_quality *
+                                     self._env_factors["pd_mult"] * self._reliability_factors["pd_mult"])
+                            
+                            if self.vision_rng.random() > pd_eff:
+                                frame_rows.append(self._make_vision_row(
+                                    t, uav_id, true_det, None, None, None,
+                                    uav_pos, None, None, False, False))
+                                continue
+                            
+                            # Measurement (position with noise)
+                            meas_x = tx + self.vision_rng.gauss(0, self.position_noise_std)
+                            meas_y = ty + self.vision_rng.gauss(0, self.position_noise_std)
+                            meas_bearing = math.atan2(dy, dx) + self.vision_rng.gauss(0, self.heading_noise_std)
+                            
+                            confidence = self._compute_confidence(true_range, snr_factor, lighting_quality)
+                            covariance = self._compute_covariance(true_range)
+                            
+                            frame_rows.append(self._make_vision_row(
+                                t, uav_id, true_det, meas_x, meas_y, meas_bearing,
+                                uav_pos, confidence, covariance, True, False))
+                        
+                        # False positives (random detections in FOV)
+                        if self.vision_rng.random() < (self.false_pos_rate * 
+                                                      self._env_factors["fp_mult"] *
+                                                      self._reliability_factors["fp_mult"]):
+                            theta = heading + self.vision_rng.uniform(-half_fov, half_fov)
+                            r = self.vision_rng.uniform(0.5, self.max_range)
+                            fp_x = uav_pos[0] + r * math.cos(theta)
+                            fp_y = uav_pos[1] + r * math.sin(theta)
+                            fp_bearing = theta
+                            
+                            covariance = self._compute_covariance(r)
+                            frame_rows.append(self._make_vision_row(
+                                t, uav_id, None, fp_x, fp_y, fp_bearing,
+                                uav_pos, 0.5, covariance, True, True))
 
-                uav_pos = self.sim.pos[uav_id]
-                heading = self._heading(uav_id, uav_pos)
+                    self._scan_buffer[uav_id].append((t, frame_rows))
+
+                # Process delayed frames
+                ready_frame = None
+                cutoff = t - self.latency_steps
                 
-                # Get true detections for logging
-                true_dets = self.sim._true_detections_for(uav_id)
-
-                frame_rows = []
-
-                # Process real targets in FOV
-                for true_det in true_dets:
-                    tx, ty = true_det["x"], true_det["y"]
-                    dx, dy = tx - uav_pos[0], ty - uav_pos[1]
-                    true_range = math.hypot(dx, dy)
-                    
-                    # Range gate
-                    if true_range > self.max_range or true_range < 0.1:
-                        frame_rows.append(self._make_vision_row(
-                            t, uav_id, true_det, None, None, None,
-                            uav_pos, None, None, False, False))
-                        continue
-                    
-                    # FOV check (symmetric around heading)
-                    true_bearing = math.atan2(dy, dx)
-                    angle_diff = abs(_wrap_angle(true_bearing - heading))
-                    if angle_diff > half_fov:
-                        frame_rows.append(self._make_vision_row(
-                            t, uav_id, true_det, None, None, None,
-                            uav_pos, None, None, False, False))
-                        continue
-                    
-                    # Occlusion (random)
-                    if self.vision_rng.random() < 0.08:
-                        frame_rows.append(self._make_vision_row(
-                            t, uav_id, true_det, None, None, None,
-                            uav_pos, None, None, False, False))
-                        continue
-                    
-                    # Detection roll (range-dependent, environment/reliability modulated)
-                    range_factor = max(0.3, 1.0 - (true_range / self.max_range) ** 2)
-                    snr_factor = range_factor
-                    pd_eff = (self.pd * range_factor * lighting_quality *
-                             self._env_factors["pd_mult"] * self._reliability_factors["pd_mult"])
-                    
-                    if self.vision_rng.random() > pd_eff:
-                        frame_rows.append(self._make_vision_row(
-                            t, uav_id, true_det, None, None, None,
-                            uav_pos, None, None, False, False))
-                        continue
-                    
-                    # Measurement (position with noise)
-                    meas_x = tx + self.vision_rng.gauss(0, self.position_noise_std)
-                    meas_y = ty + self.vision_rng.gauss(0, self.position_noise_std)
-                    meas_bearing = math.atan2(dy, dx) + self.vision_rng.gauss(0, self.heading_noise_std)
-                    
-                    confidence = self._compute_confidence(true_range, snr_factor, lighting_quality)
-                    covariance = self._compute_covariance(true_range)
-                    
-                    frame_rows.append(self._make_vision_row(
-                        t, uav_id, true_det, meas_x, meas_y, meas_bearing,
-                        uav_pos, confidence, covariance, True, False))
+                buf = self._scan_buffer[uav_id]
+                idx_to_remove = -1
+                for idx, (gen_t, f_rows) in enumerate(buf):
+                    if gen_t <= cutoff:
+                        ready_frame = (gen_t, f_rows)
+                        idx_to_remove = idx
+                    else:
+                        break
                 
-                # False positives (random detections in FOV)
-                if self.vision_rng.random() < (self.false_pos_rate * 
-                                              self._env_factors["fp_mult"] *
-                                              self._reliability_factors["fp_mult"]):
-                    theta = heading + self.vision_rng.uniform(-half_fov, half_fov)
-                    r = self.vision_rng.uniform(0.5, self.max_range)
-                    fp_x = uav_pos[0] + r * math.cos(theta)
-                    fp_y = uav_pos[1] + r * math.sin(theta)
-                    fp_bearing = theta
-                    
-                    covariance = self._compute_covariance(r)
-                    frame_rows.append(self._make_vision_row(
-                        t, uav_id, None, fp_x, fp_y, fp_bearing,
-                        uav_pos, 0.5, covariance, True, True))
-
-                self._held_rows[uav_id] = frame_rows
-                self._held_step[uav_id] = t
-                self.rows.extend(frame_rows)
+                if idx_to_remove >= 0:
+                    self._scan_buffer[uav_id] = buf[idx_to_remove+1:]
+                
+                if ready_frame:
+                    gen_t, f_rows = ready_frame
+                    self._held_rows[uav_id] = f_rows
+                    self._held_step[uav_id] = gen_t
+                
+                # Report held frame
+                held = self._held_rows.get(uav_id)
+                if held is not None:
+                    gen_t = self._held_step[uav_id]
+                    for row in held:
+                        out_row = dict(row)
+                        out_row["time_step"] = t
+                        out_row["timestamp"] = gen_t
+                        out_row["measurement_age_steps"] = t - gen_t
+                        out_row["is_stale"] = out_row["measurement_age_steps"] > 0
+                        self.rows.append(out_row)
 
         return self.rows
 
