@@ -16,7 +16,7 @@
 
 <hr>
 
-## 2   Simple  Simulation Environment with Obstacles: 
+## 2  Simple  Simulation Environment with Obstacles: 
 
 - possible simulation environment:  OpenUAV or any other
 - number of UAVs: 1 
@@ -31,7 +31,7 @@
 
 <hr>
 
-## 3 Medium Simulation Environment with Obstacles: 
+## 3  Medium Simulation Environment with Obstacles: 
 
 - possible simulation environment:  OpenUAV or any other
 - number of UAVs: 2 
