@@ -50,7 +50,7 @@ DEMO_TRIALS_DEFAULT = 3
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Task 17: small representative demo run")
+    parser = argparse.ArgumentParser(description="Small representative demo run")
     parser.add_argument("--config", default=os.path.join(_ROOT_DIR, "simulation_config.json"))
     parser.add_argument("--trials", type=int, default=DEMO_TRIALS_DEFAULT,
                          help=f"Trials per demo scenario (default: {DEMO_TRIALS_DEFAULT})")
