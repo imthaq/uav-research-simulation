@@ -2,7 +2,7 @@
 
 Deterministic checks of the Kalman-filter + gated nearest-neighbor tracker in `tracking/radar_track_model.py` - detections are fed straight into `RadarTracker`, not through the full radar model.
 
-**Result: 36/36 checks passed** — all green
+**Result: 40/40 checks passed** — all green
 
 ## Summary by task
 
@@ -18,6 +18,9 @@ Deterministic checks of the Kalman-filter + gated nearest-neighbor tracker in `t
 | target_reappearance | 4/4 |
 | clutter_near_target | 5/5 |
 | two_crossing_targets | 4/4 |
+| high_measurement_noise | 1/1 |
+| parallel_targets | 2/2 |
+| multiple_targets_in_close_proximity | 1/1 |
 
 ## Detailed results
 
@@ -59,3 +62,7 @@ Deterministic checks of the Kalman-filter + gated nearest-neighbor tracker in `t
 | PASS | two_crossing_targets | left/right track identity stays stable before the crossing point | distinct id-orderings seen before crossing={('rt10_t1', 'rt10_t2')} |
 | PASS | two_crossing_targets | exactly two tracks still exist after passing through the crossing | got 2 |
 | PASS | two_crossing_targets | both post-crossing tracks are confirmed (neither was lost/respawned) | statuses=['confirmed', 'confirmed'] |
+| PASS | high_measurement_noise | high-noise track estimate remains bounded roughly near true position | got (59.692,31.393) vs true (59.0,29.5) |
+| PASS | parallel_targets | parallel targets maintain exactly two tracks | got 2 |
+| PASS | parallel_targets | both parallel targets are confirmed |  |
+| PASS | multiple_targets_in_close_proximity | multiple targets in close proximity maintain distinct tracks | got 3 |

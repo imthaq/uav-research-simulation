@@ -27,7 +27,7 @@
       "fusion_mode": "trust_weighted_fusion",
       "radar_detection_probability": 1.0,
       "radar_false_alarm_probability": 0.4,
-      "radar_clutter_density": 0.0,
+      "radar_clutter_density": 0.5,
       "radar_dropout_probability": 0.0,
       "radar_latency_steps": 0,
       "position_noise_std": 0.0,

@@ -8,45 +8,5 @@
     "mean_error": 2.1456,
     "n": 1973,
     "final_faulty_trust": 0.8321
-  },
-  {
-    "mean_error": 1.853,
-    "n": 1658,
-    "final_faulty_trust": 0.835
-  },
-  {
-    "mean_error": 2.2469,
-    "n": 2174,
-    "final_faulty_trust": 0.8321
-  },
-  {
-    "mean_error": 1.8612,
-    "n": 1614,
-    "final_faulty_trust": 0.8321
-  },
-  {
-    "mean_error": 1.8507,
-    "n": 1627,
-    "final_faulty_trust": 0.8321
-  },
-  {
-    "mean_error": 1.7345,
-    "n": 1558,
-    "final_faulty_trust": 0.8321
-  },
-  {
-    "mean_error": 1.7222,
-    "n": 1549,
-    "final_faulty_trust": 0.835
-  },
-  {
-    "mean_error": 2.0498,
-    "n": 1872,
-    "final_faulty_trust": 0.8321
-  },
-  {
-    "mean_error": 2.2866,
-    "n": 2172,
-    "final_faulty_trust": 0.8321
   }
 ]

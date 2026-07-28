@@ -8,45 +8,5 @@
     "mean_error": 0.2596,
     "n": 1555,
     "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.2692,
-    "n": 1518,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.2689,
-    "n": 1547,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.277,
-    "n": 1508,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.2595,
-    "n": 1560,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.272,
-    "n": 1555,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.2819,
-    "n": 1508,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.2585,
-    "n": 1503,
-    "delivery_rate": 0.0
-  },
-  {
-    "mean_error": 0.2801,
-    "n": 1506,
-    "delivery_rate": 0.0
   }
 ]

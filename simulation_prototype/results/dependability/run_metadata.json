@@ -1,12 +1,12 @@
 {
-  "started_at": "2026-07-23T06:19:46.886116+00:00",
-  "wall_clock_seconds": 82.765,
+  "started_at": "2026-07-28T06:39:54.289547+00:00",
+  "wall_clock_seconds": 61.778,
   "base_seed": 42,
-  "config_path": "/home/bot47/GitProjects/uav-research/simulation_prototype/simulation_config.json",
+  "config_path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\simulation_config.json",
   "trials_per_arm": {
-    "pipeline": 10,
-    "calibration_runs": 15,
-    "mission_sim": 20
+    "pipeline": 2,
+    "calibration_runs": 2,
+    "mission_sim": 2
   },
   "comparisons_run": [
     "calibrated_vs_uncalibrated_confidence",
@@ -21,15 +21,15 @@
   ],
   "comparisons_failed": 0,
   "per_comparison_runtime_seconds": {
-    "calibrated_vs_uncalibrated_confidence": 8.21,
-    "fixed_vs_dynamic_trust": 12.53,
-    "fixed_vs_adaptive_safety_margin": 4.79,
-    "no_abstention_vs_abstention": 4.04,
+    "calibrated_vs_uncalibrated_confidence": 3.91,
+    "fixed_vs_dynamic_trust": 10.41,
+    "fixed_vs_adaptive_safety_margin": 1.81,
+    "no_abstention_vs_abstention": 4.07,
     "no_handoff_vs_handoff": 0.0,
-    "centralized_vs_distributed_fusion": 11.55,
-    "covariance_fusion_vs_covariance_intersection": 22.61,
-    "single_fault_vs_combined_fault": 3.44,
-    "normal_vs_ghost_aliasing_radar": 15.59
+    "centralized_vs_distributed_fusion": 9.48,
+    "covariance_fusion_vs_covariance_intersection": 18.7,
+    "single_fault_vs_combined_fault": 1.24,
+    "normal_vs_ghost_aliasing_radar": 12.15
   },
-  "output_dir": "/home/bot47/GitProjects/uav-research/simulation_prototype/results/dependability"
+  "output_dir": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\results\\dependability"
 }

@@ -1,20 +1,20 @@
 {
   "calibrated": {
-    "mean": 0.35654,
-    "stdev": 0.004718777081284628,
-    "n": 15
+    "mean": 0.35685,
+    "stdev": 0.0058689862838483264,
+    "n": 2
   },
   "mildly_overconfident": {
-    "mean": 0.20876666666666666,
-    "stdev": 0.004724203132602921,
-    "n": 15
+    "mean": 0.20925,
+    "stdev": 0.005586143571373718,
+    "n": 2
   },
-  "verdict": "mildly_overconfident performed better on this metric (0.35654 vs 0.20876666666666666)",
+  "verdict": "mildly_overconfident performed better on this metric (0.35685 vs 0.20925)",
   "all_arms_ece": {
-    "calibrated": 0.35654,
-    "mildly_overconfident": 0.20876666666666666,
-    "severely_overconfident": 0.03842,
-    "underconfident": 0.6564133333333333
+    "calibrated": 0.35685,
+    "mildly_overconfident": 0.20925,
+    "severely_overconfident": 0.03955,
+    "underconfident": 0.6568
   },
   "metric": "Expected Calibration Error (lower = better calibrated)"
 }

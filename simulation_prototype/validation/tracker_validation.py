@@ -334,6 +334,58 @@ def test_two_crossing_targets():
           f"statuses={[t.status for t in tracker.tracks]}")
 
 
+# ---------------------------------------------------------------------
+# 11. High measurement noise
+# ---------------------------------------------------------------------
+def test_high_measurement_noise():
+    rng = random.Random(8)
+    r_std = 2.0  # High noise
+    tracker = RadarTracker("t11", r_std=r_std)
+    vx_true, vy_true = 1.0, 0.5
+    n_steps = 60
+    for step in range(n_steps):
+        x = 0.0 + vx_true * step + rng.gauss(0, r_std)
+        y = 0.0 + vy_true * step + rng.gauss(0, r_std)
+        tracker.update(step, [det(x, y)], dt=1.0)
+    track = tracker.tracks[0]
+    x_true, y_true = vx_true * (n_steps - 1), vy_true * (n_steps - 1)
+    
+    # We still check it roughly stays with the target, just with a looser tolerance
+    check("high_measurement_noise", "high-noise track estimate remains bounded roughly near true position",
+          close(track.state[0], x_true, tol=8.0) and close(track.state[1], y_true, tol=8.0),
+          f"got ({track.state[0]:.3f},{track.state[1]:.3f}) vs true ({x_true},{y_true})")
+
+# ---------------------------------------------------------------------
+# 12. Parallel targets
+# ---------------------------------------------------------------------
+def test_parallel_targets():
+    tracker = RadarTracker("t12", r_std=0.3)
+    # Two targets moving parallel to each other, maintaining constant offset
+    for step in range(10):
+        xa, xb = float(step), float(step)
+        ya, yb = 0.0, 5.0
+        tracker.update(step, [det(xa, ya), det(xb, yb)], dt=1.0)
+        
+    check("parallel_targets", "parallel targets maintain exactly two tracks",
+          len(tracker.tracks) == 2, f"got {len(tracker.tracks)}")
+    check("parallel_targets", "both parallel targets are confirmed",
+          all(t.status == RadarTrack.CONFIRMED for t in tracker.tracks))
+
+# ---------------------------------------------------------------------
+# 13. Multiple targets in close proximity
+# ---------------------------------------------------------------------
+def test_multiple_targets_in_close_proximity():
+    tracker = RadarTracker("t13", r_std=0.3)
+    # 3 targets moving together closely
+    for step in range(10):
+        xa, ya = float(step), 0.0
+        xb, yb = float(step), 1.0
+        xc, yc = float(step), -1.0
+        tracker.update(step, [det(xa, ya), det(xb, yb), det(xc, yc)], dt=1.0)
+        
+    check("multiple_targets_in_close_proximity", "multiple targets in close proximity maintain distinct tracks",
+          len(tracker.tracks) == 3, f"got {len(tracker.tracks)}")
+
 def main():
     test_constant_velocity_target()
     test_no_measurement_noise()
@@ -345,6 +397,9 @@ def main():
     test_target_reappearance()
     test_clutter_near_target()
     test_two_crossing_targets()
+    test_high_measurement_noise()
+    test_parallel_targets()
+    test_multiple_targets_in_close_proximity()
 
     failed = _checker.print_summary()
 

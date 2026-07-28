@@ -14,7 +14,8 @@
       "confidence_error_level": 0.15,
       "fusion_mode": "trust_weighted_fusion",
       "communication": {
-        "preset": "high_packet_loss"
+        "preset": "high_packet_loss",
+        "architecture": "distributed"
       }
     }
   }

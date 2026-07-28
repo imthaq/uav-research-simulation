@@ -2,14 +2,14 @@
   "no_abstention_unmitigated_rate": {
     "mean": 1.0,
     "stdev": 0.0,
-    "n": 10
+    "n": 2
   },
   "abstention_mitigated_trigger_rate": {
-    "mean": 0.57238,
-    "stdev": 0.03724843919175972,
-    "n": 10
+    "mean": 0.5408,
+    "stdev": 0.05925554826343267,
+    "n": 2
   },
-  "verdict": "abstention_mitigated_trigger_rate performed better on this metric (1.0 vs 0.57238)",
+  "verdict": "abstention_mitigated_trigger_rate performed better on this metric (1.0 vs 0.5408)",
   "metric": "fraction of degraded/critical-perception steps left unmitigated (no abstention) vs given an active fallback decision (abstention)",
   "scope_note": "Scope note (documented, not hidden): this measures the abstention\nlayer's *decisions* against real perception-quality signals - trigger\nrate, episode outcomes, fallback distribution - not yet its effect on\nUAV actuation/mission outcome, since closing that loop means changing\nsimple_swarm_sim.py's own decide_move(), which is out of scope here.\n\"No abstention\" = every degraded/critical step silently proceeds\n(the status quo); \"abstention\" = the same steps get a decision layer."
 }
