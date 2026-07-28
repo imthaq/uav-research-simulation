@@ -88,7 +88,8 @@ def make_modal_raw(uav_id, x, y, confidence=0.9, pos_var=1.0, age_steps=0, is_st
     }
 
 def r_source(track_id, radar_id, x, y, **kw):
-    return _as_source(make_radar_track(track_id, radar_id, x, y, **kw))
+    persistent_trust = kw.pop("persistent_trust", 1.0)
+    return _as_source(make_radar_track(track_id, radar_id, x, y, **kw), persistent_trust=persistent_trust)
 
 def v_source(uav_id, x, y, t=0, reg_cfg=None, **kw):
     reg_cfg = reg_cfg or {"enabled": False}
