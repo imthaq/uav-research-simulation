@@ -642,7 +642,7 @@ def main():
     # --- top-level report (2-3 lines per comparison) ---------------------
     report_path = os.path.join(args.output_dir, "dependability_report.md")
     with open(report_path, "w") as f:
-        f.write("# Task 23: Final Dependability Experiments\n\n")
+        f.write("#Final Dependability Experiments\n\n")
         f.write(f"Run at {started_at}, base_seed={base_seed}, wall_clock={wall_clock:.1f}s.\n\n")
         for name, entry in all_results.items():
             f.write(f"## {name}\n\n")
