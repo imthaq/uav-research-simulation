@@ -47,7 +47,7 @@ for _p in (_ROOT_DIR, _DEPENDABILITY_DIR):
 
 from dependability_common import clone_scenario, run_trials, seed_range, DependabilityWriter
 
-from radar_calibration_analysis import analyze_scenario as radar_calibration_analyze
+from calibration.radar_calibration_analysis import analyze_scenario as radar_calibration_analyze
 from models.radar_like_model import RadarLikeModel
 from tracking.radar_track_model import build_tracks
 from fusion.fusion_model import (
@@ -55,8 +55,8 @@ from fusion.fusion_model import (
     COVARIANCE_WEIGHTED_FUSION, COVARIANCE_INTERSECTION_FUSION,
     _as_source, _cluster,
 )
-from perception_quality_monitor import PerceptionQualityMonitor
-from selective_swarm_decision import SelectiveDecisionMaker
+from dependability.perception_quality_monitor import PerceptionQualityMonitor
+from dependability.selective_swarm_decision import SelectiveDecisionMaker
 
 from experiments.run_experiments import (
     build_run_matrix, run_and_save, run_level_row, aggregate_scenario,
