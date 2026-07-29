@@ -1296,7 +1296,7 @@ def generate_final_plots(config_path, outdir, seeds):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate graphs from results_summary.csv")
-    parser.add_argument("--summary", default="results/run_level_results.csv")
+    parser.add_argument("--summary", default="results/results_summary.csv")
     parser.add_argument("--outdir", default="plots")
     parser.add_argument("--config", default="simulation_config.json", help="Advanced-set input config")
     parser.add_argument("--advanced-outdir", default="plots/advanced")
