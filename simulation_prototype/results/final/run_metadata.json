@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-27T05:45:47.872462+00:00",
-  "wall_clock_seconds": 3768.325,
+  "generated_at": "2026-07-28T14:54:45.398464+00:00",
+  "wall_clock_seconds": 1771.332,
   "overall_status": "PASS",
   "num_scenarios": 62,
   "trials_per_scenario": 20,
@@ -8,7 +8,7 @@
   "total_trials_failed": 0,
   "base_seed": 42,
   "config_path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\simulation_config.json",
-  "config_sha256_16": "2beda776781b3e15",
+  "config_sha256_16": "1fc6b245aaefde80",
   "scenarios": [
     "baseline",
     "false_positive",

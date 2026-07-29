@@ -437,7 +437,7 @@ def main():
                               "schema, still what generate_plots.py/metrics_analysis.py expect")
     parser.add_argument("--scenario-summary-output", default=os.path.join(_ROOT_DIR, "results", "scenario_summary.csv"),
                          help="Scenario-level statistical summary (mean/median/stdev/min/max/"
-                              "95% CI per metric, aggregated across trials)")
+                              "95%% CI per metric, aggregated across trials)")
     parser.add_argument("--metadata-output", default=os.path.join(_ROOT_DIR, "results", "experiment_metadata.json"),
                          help="Experiment metadata: config identity, trial/seed strategy, "
                               "per-scenario seeds used, timing, environment")

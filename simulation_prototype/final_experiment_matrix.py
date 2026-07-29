@@ -37,7 +37,7 @@ import json
 import os
 import sys
 
-_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _ROOT_DIR not in sys.path:
     sys.path.insert(0, _ROOT_DIR)
 
@@ -47,7 +47,7 @@ from dependability_controllers import CONTROLLERS
 from experiments.combined_fault_scenarios import SCENARIOS as COMBINED_FAULT_SCENARIOS
 from experiments.scalability_experiments import SWARM_SIZES
 
-OUT_PATH = os.path.join(_ROOT_DIR, "simulation_prototype/logs/final_dependability_experiment_matrix.csv")
+OUT_PATH = os.path.join(_ROOT_DIR, "logs/final_dependability_experiment_matrix.csv")
 
 # Task 18 axes that actually reached DEGRADED/FAILURE in
 # swarm_failure_envelope.csv - confirmed at full trial count here.
@@ -178,7 +178,7 @@ def build_matrix(config):
 
 
 def main():
-    config = json.load(open(os.path.join(_ROOT_DIR, "simulation_prototype/simulation_config.json")))
+    config = json.load(open(os.path.join(_ROOT_DIR, "simulation_config.json")))
     rows = build_matrix(config)
     with open(OUT_PATH, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDNAMES)

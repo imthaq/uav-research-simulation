@@ -276,7 +276,7 @@ def _adv_style(ax):
 def mean_ci(vals):
     vals = [v for v in vals if v is not None]
     if not vals:
-        return None, 0.0
+        return float('nan'), 0.0
     m = statistics.mean(vals)
     if len(vals) < 2:
         return m, 0.0
@@ -1296,7 +1296,7 @@ def generate_final_plots(config_path, outdir, seeds):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate graphs from results_summary.csv")
-    parser.add_argument("--summary", default="results/results_summary.csv")
+    parser.add_argument("--summary", default="results/run_level_results.csv")
     parser.add_argument("--outdir", default="plots")
     parser.add_argument("--config", default="simulation_config.json", help="Advanced-set input config")
     parser.add_argument("--advanced-outdir", default="plots/advanced")

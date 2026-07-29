@@ -12,5 +12,61 @@
     "aliasing_rate": 0.0,
     "mean_fused_error": 0.4125,
     "num_fused_tracks_per_step": 4.333
+  },
+  {
+    "n_detection_rows": 4125,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.617,
+    "num_fused_tracks_per_step": 4.434
+  },
+  {
+    "n_detection_rows": 4044,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.5468,
+    "num_fused_tracks_per_step": 4.364
+  },
+  {
+    "n_detection_rows": 3842,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.4748,
+    "num_fused_tracks_per_step": 4.389
+  },
+  {
+    "n_detection_rows": 4106,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.5286,
+    "num_fused_tracks_per_step": 4.406
+  },
+  {
+    "n_detection_rows": 4121,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.4174,
+    "num_fused_tracks_per_step": 4.312
+  },
+  {
+    "n_detection_rows": 4080,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.5814,
+    "num_fused_tracks_per_step": 4.41
+  },
+  {
+    "n_detection_rows": 3848,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.4551,
+    "num_fused_tracks_per_step": 4.403
+  },
+  {
+    "n_detection_rows": 4082,
+    "ghost_return_rate": 0.0,
+    "aliasing_rate": 0.0,
+    "mean_fused_error": 0.3978,
+    "num_fused_tracks_per_step": 4.299
   }
 ]

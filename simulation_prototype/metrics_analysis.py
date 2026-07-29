@@ -355,7 +355,7 @@ def confidence_calibration_metrics(rows, num_bins=10):
             "n_samples": 0, "expected_calibration_error": None,
             "maximum_calibration_error": None, "brier_score": None,
             "negative_log_likelihood": None, "overconfidence_rate": None,
-            "underconfidence_rate": None
+            "underconfidence_rate": None, "reliability_bins": []
         }
 
     eps = 1e-7
@@ -369,8 +369,11 @@ def confidence_calibration_metrics(rows, num_bins=10):
     bins = _reliability_bins(pairs, num_bins)
     ece, mce = 0.0, 0.0
     overconfident_n, underconfident_n = 0, 0
+    formatted_bins = []
     for i, b in enumerate(bins):
-        if not b: continue
+        if not b:
+            formatted_bins.append({"n": 0, "bin_confidence": 0.0, "bin_accuracy": 0.0})
+            continue
         bin_confidence = statistics.mean(c for c, _ in b)
         bin_accuracy = statistics.mean(1.0 if y else 0.0 for _, y in b)
         gap = bin_confidence - bin_accuracy
@@ -381,6 +384,12 @@ def confidence_calibration_metrics(rows, num_bins=10):
             overconfident_n += len(b)
         elif gap < 0:
             underconfident_n += len(b)
+            
+        formatted_bins.append({
+            "n": len(b),
+            "bin_confidence": round(bin_confidence, 4),
+            "bin_accuracy": round(bin_accuracy, 4)
+        })
 
     return {
         "n_samples": n,
@@ -390,6 +399,7 @@ def confidence_calibration_metrics(rows, num_bins=10):
         "negative_log_likelihood": round(statistics.mean(nll_terms), 6),
         "overconfidence_rate": round(overconfident_n / n, 4),
         "underconfidence_rate": round(underconfident_n / n, 4),
+        "reliability_bins": formatted_bins,
     }
 
 

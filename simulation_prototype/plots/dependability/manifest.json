@@ -1,62 +1,62 @@
 [
   {
     "plot": "calibration_reliability_diagram",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/calibration_reliability_diagram.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\calibration_reliability_diagram.png"
   },
   {
     "plot": "calibration_error_vs_collision_risk",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/calibration_error_vs_collision_risk.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\calibration_error_vs_collision_risk.png"
   },
   {
     "plot": "registration_error_vs_fusion_rmse",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/registration_error_vs_fusion_rmse.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\registration_error_vs_fusion_rmse.png"
   },
   {
     "plot": "sensor_correlation_vs_covariance_consistency",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/sensor_correlation_vs_covariance_consistency.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\sensor_correlation_vs_covariance_consistency.png"
   },
   {
     "plot": "doppler_ambiguity_vs_response_error",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/doppler_ambiguity_vs_response_error.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\doppler_ambiguity_vs_response_error.png"
   },
   {
     "plot": "ghost_return_rate_vs_false_track_count",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/ghost_return_rate_vs_false_track_count.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\ghost_return_rate_vs_false_track_count.png"
   },
   {
     "plot": "perception_quality_vs_safety_margin",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/perception_quality_vs_safety_margin.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\perception_quality_vs_safety_margin.png"
   },
   {
     "plot": "abstention_threshold_vs_mission_success",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/abstention_threshold_vs_mission_success.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\abstention_threshold_vs_mission_success.png"
   },
   {
     "plot": "abstention_threshold_vs_mission_delay",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/abstention_threshold_vs_mission_delay.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\abstention_threshold_vs_mission_delay.png"
   },
   {
     "plot": "handoff_strategy_vs_collision_risk",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/handoff_strategy_vs_collision_risk.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\handoff_strategy_vs_collision_risk.png"
   },
   {
     "plot": "handoff_strategy_vs_recovery_time",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/handoff_strategy_vs_recovery_time.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\handoff_strategy_vs_recovery_time.png"
   },
   {
     "plot": "combined_fault_severity_vs_mission_success",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/combined_fault_severity_vs_mission_success.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\combined_fault_severity_vs_mission_success.png"
   },
   {
     "plot": "swarm_size_vs_communication_load",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/swarm_size_vs_communication_load.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\swarm_size_vs_communication_load.png"
   },
   {
     "plot": "swarm_size_vs_simulation_runtime",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/swarm_size_vs_simulation_runtime.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\swarm_size_vs_simulation_runtime.png"
   },
   {
     "plot": "final_failure_envelope_heatmap",
-    "path": "/home/bot47/GitProjects/uav-research/simulation_prototype/plots/dependability/final_failure_envelope_heatmap.png"
+    "path": "C:\\Users\\AntiVenom\\Desktop\\uav-research\\simulation_prototype\\plots\\dependability\\final_failure_envelope_heatmap.png"
   }
 ]

@@ -1,29 +1,29 @@
 {
   "normal": {
-    "mean": 0.4779,
-    "stdev": 0.09248956697920044,
-    "n": 2
+    "mean": 0.49746999999999997,
+    "stdev": 0.07652809288098064,
+    "n": 10
   },
   "ghost_aliasing": {
-    "mean": 0.48605,
-    "stdev": 0.010818733752154202,
-    "n": 2
+    "mean": 0.46283,
+    "stdev": 0.038592401382194975,
+    "n": 10
   },
-  "verdict": "normal performed better on this metric (0.4779 vs 0.48605)",
+  "verdict": "ghost_aliasing performed better on this metric (0.49746999999999997 vs 0.46283)",
   "track_count_inflation": {
     "normal": {
-      "mean": 4.35,
-      "stdev": 0.02404163056034248,
-      "n": 2
+      "mean": 4.3717,
+      "stdev": 0.045008764578567104,
+      "n": 10
     },
     "ghost_aliasing": {
-      "mean": 4.2170000000000005,
-      "stdev": 0.09899494936611643,
-      "n": 2
+      "mean": 4.2582,
+      "stdev": 0.057105749856443226,
+      "n": 10
     },
-    "verdict": "ghost_aliasing performed better on this metric (4.35 vs 4.2170000000000005)"
+    "verdict": "ghost_aliasing performed better on this metric (4.3717 vs 4.2582)"
   },
-  "ghost_return_rate_mean": 0.5987,
-  "aliasing_rate_mean": 0.19369999999999998,
+  "ghost_return_rate_mean": 0.59943,
+  "aliasing_rate_mean": 0.18422,
   "metric": "nearest-true-object fused position error, meters, plus fused-track count inflation"
 }

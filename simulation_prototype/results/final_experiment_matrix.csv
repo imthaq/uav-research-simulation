@@ -1,8 +1,8 @@
 scenario_id,radar_configuration,environment,fusion_mode,architecture,communication_condition,trial_count,seed_range,output_directory
 baseline,"P_D=1.0, P_FA=0.0, clutter_density=0.0, range_noise_std=0.3, bearing_noise_std=0.0342, radial_velocity_noise_std=0.1, latency_steps=0, dropout_probability=0.0, confidence_error=0.0",clear (default),no_fusion,centralized,perfect (default),20,42-61,logs/ (baseline_run<N>.csv)
 very_low_P_D,"P_D=0.1, P_FA=0.0, clutter_density=0.0, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (very_low_P_D_run<N>.csv)
-very_high_P_FA,"P_D=1.0, P_FA=0.4, clutter_density=0.0, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (very_high_P_FA_run<N>.csv)
-high_clutter,"P_D=1.0, P_FA=0.0, clutter_density=0.5, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_clutter_run<N>.csv)
+very_high_P_FA,"P_D=1.0, P_FA=0.4, clutter_density=0.5, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (very_high_P_FA_run<N>.csv)
+high_clutter,"P_D=1.0, P_FA=0.05, clutter_density=0.5, latency_steps=0, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_clutter_run<N>.csv)
 sensor_noise,defaults (no radar-model override),clear (default),no_fusion,centralized,perfect (default),20,42-61,logs/ (sensor_noise_run<N>.csv)
 high_latency,"P_D=1.0, P_FA=0.0, clutter_density=0.0, latency_steps=20, dropout_probability=0.0",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_latency_run<N>.csv)
 high_dropout,"P_D=1.0, P_FA=0.0, clutter_density=0.0, latency_steps=0, dropout_probability=0.7",clear (default),trust_weighted_fusion,centralized,perfect (default),20,42-61,logs/ (high_dropout_run<N>.csv)
