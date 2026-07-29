@@ -37,7 +37,7 @@ Usage:
 
 import argparse
 import csv
-import json
+import json 
 import os
 import shutil
 import sys

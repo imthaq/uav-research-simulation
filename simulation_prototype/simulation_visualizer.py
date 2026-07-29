@@ -316,6 +316,15 @@ class SimulationVisualizer:
     passed in so several scenarios share one figure.
     """
 
+    # Shared font sizes so every overlay reads at a consistent, legible
+    # scale instead of a mix of ad-hoc values.
+    FONT_TITLE = 13
+    FONT_AXIS = 10
+    FONT_ENTITY_ID = 9      # UAV / target ID labels
+    FONT_DETAIL = 8         # detection / track / fusion annotation text
+    FONT_INFO_PANEL = 9.5
+    FONT_LEGEND = 8.5
+
     def __init__(self, data: SimulationData, figsize: Tuple[int, int] = (12, 10),
                  fig=None, ax=None, radar_data: Optional["RadarData"] = None,
                  radar_range: float = 15.0, radar_fov_deg: float = 360.0,
@@ -390,13 +399,20 @@ class SimulationVisualizer:
                 self._track_history[tid].sort(key=lambda r: r[0])
 
     def setup_axis(self):
-        """Configure the plot axis and static elements."""
+        """Configure the plot axis and static elements. Called once; the
+        axis bounds and aspect ratio are fixed here and never changed
+        again, so the "camera" stays put for the whole render/animation
+        instead of drifting frame to frame."""
         self.ax.set_xlim(-5, self.data.world_width + 5)
         self.ax.set_ylim(-5, self.data.world_height + 5)
         self.ax.set_aspect("equal")
-        self.ax.set_xlabel("X (meters)")
-        self.ax.set_ylabel("Y (meters)")
-        self.ax.set_title(f"UAV Swarm Simulation: {self.data.scenario_name}")
+        self.ax.set_xlabel("X (meters)", fontsize=self.FONT_AXIS)
+        self.ax.set_ylabel("Y (meters)", fontsize=self.FONT_AXIS)
+        self.ax.tick_params(labelsize=self.FONT_AXIS - 1)
+        self.ax.set_title(
+            f"UAV Swarm Simulation \u2014 {self.data.scenario_name}",
+            fontsize=self.FONT_TITLE, fontweight="bold",
+        )
         self.ax.grid(True, alpha=0.3)
 
         # Draw world boundary
@@ -410,21 +426,37 @@ class SimulationVisualizer:
         )
         self.ax.add_patch(boundary)
 
-        # Draw obstacle (static)
+        # Draw obstacle (static). Its legend entry is added explicitly in
+        # add_legend(), so no label is set here.
         ox, oy = self.data.obstacle_pos
         self.obstacle_circle = patches.Circle(
-            (ox, oy),
-            self.data.obstacle_radius,
-            color="red",
-            alpha=0.6,
-            label="Actual Obstacle",
+            (ox, oy), self.data.obstacle_radius, color="red", alpha=0.6,
         )
         self.ax.add_patch(self.obstacle_circle)
 
     def _get_colors(self) -> List[str]:
-        """Get distinct colors for each UAV."""
-        colors = plt.cm.tab10(np.linspace(0, 1, self.data.num_uavs))
-        return [plt.cm.hsv(i / max(self.data.num_uavs, 1)) for i in range(self.data.num_uavs)]
+        """Get one distinct, stable color per UAV, evenly spaced around
+        the color wheel so IDs stay visually distinguishable regardless
+        of swarm size."""
+        n = max(self.data.num_uavs, 1)
+        return [plt.cm.hsv(i / n) for i in range(self.data.num_uavs)]
+
+    def _mission_status(self, step: int) -> str:
+        """SUCCESS once mission_completed_flag has gone True at or before
+        this step; FAILURE once the final logged step is reached without
+        that ever happening; otherwise still "In Progress".
+
+        While live (is_live=True), self.data.steps only reflects how many
+        steps have arrived so far, not the true final count, so FAILURE is
+        never claimed mid-stream. LiveSimulationView.close() re-renders the
+        final frame with is_live=False once the run actually ends, which is
+        when FAILURE can be shown."""
+        is_last_step = step >= self.data.steps - 1 and not self.data.is_live
+        if self.data.mission_success and step >= self.data.mission_success_step:
+            return "SUCCESS"
+        if is_last_step and not self.data.mission_success:
+            return "FAILURE"
+        return "In Progress"
 
     def render_step(self, step: int):
         """Render a single simulation step."""
@@ -468,7 +500,8 @@ class SimulationVisualizer:
                 (dot,) = self.ax.plot(x, y, "o", markersize=10, color=color)
                 self.uav_dots[uav_id] = dot
                 label = self.ax.text(
-                    x, y + 1.5, f"U{uav_id}", fontsize=8, ha="center", color=color
+                    x, y + 1.5, f"U{uav_id}", fontsize=self.FONT_ENTITY_ID,
+                    ha="center", fontweight="bold", color=color,
                 )
                 self.uav_labels[uav_id] = label
             else:
@@ -549,102 +582,87 @@ class SimulationVisualizer:
                 "",
                 transform=self.ax.transAxes,
                 verticalalignment="top",
-                fontsize=9,
-                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+                fontsize=self.FONT_INFO_PANEL,
+                family="monospace",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.6),
             )
 
-        # Extract info from first UAV row
         info_row = step_data[0]
         time_s = float(info_row.get("time_s", 0))
         scenario = info_row.get("scenario", "unknown")
-        error_type = info_row.get("perception_error_type", "none")
-        action_taken = info_row.get("action_taken", "move")
-
-        # Mission status: SUCCESS once mission_completed_flag has gone True
-        # at or before this step; FAILURE once we reach the final logged
-        # step without that ever happening; otherwise still In Progress.
-        # While live (is_live=True), self.data.steps is just "how many steps
-        # have arrived so far", not the true final count - the sim might
-        # still be running - so we never claim FAILURE mid-stream. The final
-        # frame gets re-rendered with is_live=False by LiveSimulationView.close()
-        # once the run loop actually ends, which is when FAILURE can be shown.
-        is_last_step = step >= self.data.steps - 1 and not self.data.is_live
-        if self.data.mission_success and step >= self.data.mission_success_step:
-            mission_status = "SUCCESS"
-        elif is_last_step and not self.data.mission_success:
-            mission_status = "FAILURE"
-        else:
-            mission_status = "In Progress"
-
         fusion_mode = info_row.get("fusion_mode", "no_fusion")
-        radar_error = self._radar_error_summary(step) if self.radar_data is not None else None
+        mission_status = self._mission_status(step)
 
-        info_text = f"""Step: {step} | Time: {time_s:.1f}s
-Scenario: {scenario}
-Action: {action_taken}
-Error: {error_type}
-Fusion: {fusion_mode}"""
-        if radar_error is not None:
-            info_text += f"\nRadar error: {radar_error}"
+        # Core block: always shown.
+        lines = [
+            f"Scenario: {scenario}",
+            f"Step {step}  |  t = {time_s:.1f}s",
+            f"Fusion mode: {fusion_mode}",
+        ]
 
-        # Task 26: radar operating mode, degraded-sensor / reliability state.
+        # Conditional block: only real, non-empty conditions are shown, so
+        # the panel doesn't fill up with "none" / "nominal" noise on a
+        # normal step.
+        extras = []
+        error_type = info_row.get("perception_error_type", "none")
+        if error_type not in (None, "", "none", "None"):
+            extras.append(f"Perception error: {error_type}")
+
         if self.radar_data is not None:
+            radar_error = self._radar_error_summary(step)
+            if radar_error and radar_error != "none":
+                extras.append(f"Radar condition: {radar_error}")
             radar_mode_s = self._radar_mode_summary(step)
             if radar_mode_s:
-                info_text += f"\nRadar: {radar_mode_s}"
+                extras.append(f"Radar mode: {radar_mode_s}")
 
-        # Task 26: perception-quality state and critical action taken.
         quality_action = info_row.get("quality_action_taken")
-        if quality_action and quality_action not in (None, "", "None"):
-            info_text += f"\nQuality action: {quality_action}"
+        if quality_action not in (None, "", "None"):
+            extras.append(f"Quality action: {quality_action}")
 
-        # Task 26: adaptive safety margin.
-        sm_mode = info_row.get("safety_margin_mode", "")
         sm_val = info_row.get("safety_margin_applied")
         if sm_val not in (None, ""):
             try:
-                info_text += f"\nSafety margin [{sm_mode}]: {float(sm_val):.2f}"
+                sm_mode = info_row.get("safety_margin_mode", "")
+                extras.append(f"Safety margin ({sm_mode}): {float(sm_val):.2f}")
             except (TypeError, ValueError):
                 pass
 
-        # Task 26: abstention status.
         if info_row.get("abstention_flag") in ("True", True):
-            abstention_kind = ("correct" if info_row.get("correct_abstention_flag") in ("True", True)
-                               else "unnecessary" if info_row.get("unnecessary_abstention_flag") in ("True", True)
-                               else "abstained")
-            info_text += f"\nAbstention: {abstention_kind}"
+            kind = ("correct" if info_row.get("correct_abstention_flag") in ("True", True)
+                    else "unnecessary" if info_row.get("unnecessary_abstention_flag") in ("True", True)
+                    else "abstained")
+            extras.append(f"Abstention: {kind}")
 
-        # Task 26: handoff source/destination from handoff flags.
         if info_row.get("handoff_success_flag") in ("True", True):
-            info_text += "\nHandoff: SUCCESS"
+            extras.append("Handoff: success")
         elif info_row.get("handoff_failure_flag") in ("True", True):
-            info_text += "\nHandoff: FAILED"
+            extras.append("Handoff: failed")
 
-        # Task 26: recovery state.
         if info_row.get("critical_mode_flag") in ("True", True):
-            info_text += "\nMode: CRITICAL"
+            extras.append("System mode: CRITICAL")
         elif info_row.get("degraded_mode_flag") in ("True", True):
-            info_text += "\nMode: DEGRADED"
+            extras.append("System mode: degraded")
         rec = info_row.get("recovery_time_steps")
-        if rec not in (None, "", "None") and str(rec) != "None":
+        if rec not in (None, "", "None"):
             try:
-                info_text += f"\nRecovery: {int(float(rec))}step(s)"
+                extras.append(f"Recovery: {int(float(rec))} step(s)")
             except (TypeError, ValueError):
                 pass
 
-        # Task 26: cross-modal registration offset (read from config; not in
-        # per-step rows since it's a static scenario property).
         reg_s = self._registration_summary()
         if reg_s:
-            info_text += f"\nRegistration: {reg_s}"
+            extras.append(f"Sensor registration: {reg_s}")
 
         if self.fused_data is not None:
             arch_summary = self._fusion_architecture_summary(step)
             if arch_summary:
-                info_text += f"\nFusion arch: {arch_summary}"
-        info_text += f"\nMission: {mission_status}"
+                extras.append(f"Fusion architecture: {arch_summary}")
 
-        self.info_text.set_text(info_text)
+        lines.extend(extras)
+        lines.append(f"Mission: {mission_status}")
+
+        self.info_text.set_text("\n".join(lines))
         if mission_status == "SUCCESS":
             self.info_text.set_bbox(dict(boxstyle="round", facecolor="lightgreen", alpha=0.7))
         elif mission_status == "FAILURE":
@@ -701,7 +719,7 @@ Fusion: {fusion_mode}"""
                 self.radar_artists.append(pt)
                 ghost_type = d.get("ghost_type", "ghost")
                 lbl = self.ax.text(dx + 0.6, dy + 0.6, f"ghost:{ghost_type[:4]}",
-                                    fontsize=6, color="darkorange")
+                                    fontsize=self.FONT_DETAIL, color="darkorange")
                 self.radar_artists.append(lbl)
                 continue
 
@@ -729,7 +747,7 @@ Fusion: {fusion_mode}"""
                     dop_s = "!dop" if d.get("doppler_ambiguity_flag") in ("True", True) else ""
                     lbl = self.ax.text(dx + 0.6, dy + 0.6,
                                         f"R:{float(conf):.2f}{dop_s}",
-                                        fontsize=6, color=lbl_color)
+                                        fontsize=self.FONT_DETAIL, color=lbl_color)
                     self.radar_artists.append(lbl)
             elif status == "false_alarm":
                 dx, dy = float(d["detected_x"]), float(d["detected_y"])
@@ -738,7 +756,7 @@ Fusion: {fusion_mode}"""
                 (pt,) = self.ax.plot(dx, dy, "^", color=fa_color, markersize=6, alpha=0.85)
                 self.radar_artists.append(pt)
                 lbl = self.ax.text(dx + 0.6, dy + 0.6, "clutter" if is_clutter else "false+",
-                                    fontsize=6, color=fa_color)
+                                    fontsize=self.FONT_DETAIL, color=fa_color)
                 self.radar_artists.append(lbl)
             elif status == "missed":
                 # Mark where the real target was, to show what the radar
@@ -749,7 +767,7 @@ Fusion: {fusion_mode}"""
                     (pt,) = self.ax.plot(tx, ty, "o", markerfacecolor="none",
                                           markeredgecolor="gray", markersize=8)
                     self.radar_artists.append(pt)
-                    lbl = self.ax.text(tx + 0.6, ty - 1.2, "missed", fontsize=6, color="gray")
+                    lbl = self.ax.text(tx + 0.6, ty - 1.2, "missed", fontsize=self.FONT_DETAIL, color="gray")
                     self.radar_artists.append(lbl)
 
         # This step's radar tracks for this UAV (from radar_track_model.py).
@@ -818,13 +836,16 @@ Fusion: {fusion_mode}"""
                     false_track = True
                     break
 
+            # Marker shape/color already encode predicted-vs-filtered and
+            # status (see track_colors / is_predicted above and the
+            # legend), so the label itself stays short: track ID,
+            # confidence, and a "?" flag for a likely false track.
             conf = t.get("confidence")
-            conf_s = f", c={float(conf):.2f}" if conf not in (None, "") else ""
-            kind = "predicted" if is_predicted else "filtered"
-            false_s = " [FALSE-TRACK?]" if false_track else ""
+            conf_s = f" c={float(conf):.2f}" if conf not in (None, "") else ""
+            false_s = "?" if false_track else ""
             lbl = self.ax.text(
-                tx + 0.7, ty + 0.7, f"{t.get('track_id', '')} [{status}/{kind}]{conf_s}{false_s}",
-                fontsize=6, color="crimson" if false_track else tcolor)
+                tx + 0.7, ty + 0.7, f"{t.get('track_id', '')}{false_s}{conf_s}",
+                fontsize=self.FONT_DETAIL, color="crimson" if false_track else tcolor)
             self.radar_artists.append(lbl)
 
         # Tag the existing perceived-obstacle marker as "fused" when this
@@ -833,7 +854,7 @@ Fusion: {fusion_mode}"""
             px, py = row.get("perceived_obstacle_x"), row.get("perceived_obstacle_y")
             if px not in (None, "") and py not in (None, ""):
                 lbl = self.ax.text(float(px), float(py) + 1.6, "fused",
-                                    fontsize=6, color=color, ha="center")
+                                    fontsize=self.FONT_DETAIL, color=color, ha="center")
                 self.radar_artists.append(lbl)
 
     def _draw_aux_overlay(self, sensor_data: "AuxSensorData", marker_char: str,
@@ -867,7 +888,7 @@ Fusion: {fusion_mode}"""
             rel_s = f"/t={float(rel):.2f}" if rel not in (None, "") else ""
             stale_s = " *STALE*" if is_stale else ""
             lbl = self.ax.text(mx + 0.5, my - 0.9, f"{tag}:{conf_s}{rel_s}{stale_s}",
-                                fontsize=6, color=mcolor)
+                                fontsize=self.FONT_DETAIL, color=mcolor)
             self.radar_artists.append(lbl)
 
             if self.show_covariance:
@@ -930,13 +951,15 @@ Fusion: {fusion_mode}"""
                 alpha=0.4 if is_stale else 0.95, markeredgecolor="black", markeredgewidth=0.6)
             self.radar_artists.append(pt)
 
+            # Architecture (centralized/distributed) is shown once in the
+            # info panel rather than repeated on every marker.
             tag = "FUSED" if is_centralized else f"FUSED[U{anchor_uav}]"
-            conf_s = f", c={float(conf):.2f}" if conf not in (None, "") else ""
-            n_s = f", n={n_src}" if n_src not in (None, "") else ""
+            conf_s = f" c={float(conf):.2f}" if conf not in (None, "") else ""
+            n_s = f" n={n_src}" if n_src not in (None, "") else ""
             stale_s = " STALE" if is_stale else ""
             lbl = self.ax.text(
-                fx + 0.7, fy - 1.1, f"{tag} ({arch}{n_s}){conf_s}{stale_s}",
-                fontsize=6, color=mcolor, fontweight="bold")
+                fx + 0.7, fy - 1.1, f"{tag}{n_s}{conf_s}{stale_s}",
+                fontsize=self.FONT_DETAIL, color=mcolor, fontweight="bold")
             self.radar_artists.append(lbl)
 
             if self.show_covariance:
@@ -978,8 +1001,8 @@ Fusion: {fusion_mode}"""
                     if not delivered:
                         mx, my = (ax_pos[0] + ox2) / 2.0, (ax_pos[1] + oy2) / 2.0
                         drop_lbl = self.ax.text(
-                            mx, my, "x", fontsize=9, color="red", ha="center",
-                            va="center", fontweight="bold")
+                            mx, my, "x", fontsize=self.FONT_ENTITY_ID, color="red",
+                            ha="center", va="center", fontweight="bold")
                         self.radar_artists.append(drop_lbl)
 
     def _fusion_architecture_summary(self, step: int) -> str:
@@ -1042,13 +1065,12 @@ Fusion: {fusion_mode}"""
     def _registration_summary(self) -> str:
         """Task 26: returns a short string describing the cross-modal
         registration offset for this scenario, if the visualizer was
-        constructed with a config dict that carries one.
-        ponytail: reads self._scenario_config which is set by
-        SimulationVisualizer.__init__ only when a caller passes
-        scenario_config=; absent in batch mode. The ceiling is that
-        registration drift is not reflected per-step (it's a static
-        config summary), which is acceptable since the overlay's purpose
-        is to remind the viewer that mis-registration is active."""
+        constructed with a config dict that carries one. Reads
+        self._scenario_config, which is set by SimulationVisualizer.__init__
+        only when a caller passes scenario_config= (absent in batch mode).
+        Registration drift is not reflected per-step since it's a static
+        config property; this is only meant to remind the viewer that
+        mis-registration is active for the run."""
         cfg = getattr(self, "_scenario_config", None)
         if cfg is None:
             return ""
@@ -1086,11 +1108,7 @@ Fusion: {fusion_mode}"""
                 Line2D([0], [0], marker="D", color="w", markerfacecolor="gray", markersize=8, label="Filtered Track (updated)"),
                 patches.Patch(facecolor="gray", alpha=0.15, label="Track Covariance (2-sigma)"),
                 Line2D([0], [0], color="gray", alpha=0.4, label="Track History"),
-                Line2D([0], [0], marker="D", color="w", markerfacecolor="crimson", markersize=8, label="Possible False Track"),
-                # Task 26 additions:
                 Line2D([0], [0], marker="v", color="w", markerfacecolor="darkorange", markersize=8, label="Ghost Return (multipath/side-lobe)"),
-                Line2D([0], [0], marker="x", color="limegreen", markersize=8, markeredgewidth=1.5, label="Detection (conf. calibrated, correct)"),
-                Line2D([0], [0], marker="x", color="red", markersize=8, markeredgewidth=1.5, label="Detection (conf. miscalibrated, false alarm)"),
             ]
         if self.vision_data is not None:
             legend_elements.append(
@@ -1102,14 +1120,16 @@ Fusion: {fusion_mode}"""
             legend_elements += [
                 Line2D([0], [0], marker="*", color="w", markerfacecolor="gold", markersize=11, label="Fused Track (centralized)"),
                 Line2D([0], [0], marker="*", color="w", markerfacecolor="gray", markersize=11, label="Fused Track (distributed, per-UAV)"),
-                Line2D([0], [0], color="gray", alpha=0.4, label="Comm Link (delivered)"),
+                Line2D([0], [0], color="gray", alpha=0.4, label="Comm Link (delivered, colored by sender)"),
                 Line2D([0], [0], color="red", linestyle=":", label="Comm Link (dropped)"),
             ]
-        self.ax.legend(handles=legend_elements, loc="upper right", fontsize=8)
+        self.ax.legend(handles=legend_elements, loc="upper right", fontsize=self.FONT_LEGEND)
 
     def save_animation(self, output_path: str, fps: int = 5, dpi: int = 80):
         """Generate and save animation as MP4 or GIF."""
-        print(f"Creating animation... this may take a while")
+        print("Creating animation... this may take a while")
+        self.add_legend()
+        self.fig.tight_layout()
 
         def animate(frame):
             self.render_step(frame)
@@ -1901,7 +1921,7 @@ def generate_final_demo_videos(config_path: str = "simulation_config.json",
         results["adaptive_safety_margin_comparison"] = False
 
     # ---- swarm-size comparison (3 / 5 / 8 UAVs, side-by-side) ----
-    # ponytail: swarm_sizes is hardcoded to three representative sizes.
+    # swarm_sizes is hardcoded to three representative sizes.
     # Upgrade path: make it a parameter if a sweep over more sizes is needed.
     swarm_sizes = [3, 5, 8]
     base_scn = "baseline"

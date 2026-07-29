@@ -1,6 +1,6 @@
 # Radar Model Validation Results
 
-Controlled, hand-computable checks of the core radar-domain equations and behaviors in `radar_like_model.py` (range/bearing/radial-velocity, noise, Cartesian reconstruction, covariance, P_D/P_FA, Poisson clutter, range-dependent SNR, latency, dropout, scan-timestamp bookkeeping, and sensing-range limits) - not the full swarm simulation, just the radar-domain math and the radar-level scan machinery.
+Controlled, hand-computable checks of the core radar-domain equations and behaviors in `radar_like_model.py` (range/bearing/radial-velocity,truction, covariance, P_D/P_FA, Poisson clutter, range-dependent SNR, latency, dropout, sc noise, Cartesian reconsan-timestamp bookkeeping, and sensing-range limits) - not the full swarm simulation, just the radar-domain math and the radar-level scan machinery.
 
 Two strategies are used: (1) a *bare* `RadarLikeModel` (constructed via `object.__new__`, bypassing `__init__`, which needs a full `Simulation`) for the pure-math checks; and (2) a *full* `RadarLikeModel` wired to a minimal fake `Simulation` stand-in (`_FakeSim`) for checks that need the real `_patch_perception` closure (max/min-range gating, radar dropout, and the scan-generation-timestamp/latency buffer) exercised against controlled UAV/target geometry.
 
