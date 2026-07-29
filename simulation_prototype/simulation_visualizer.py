@@ -1489,7 +1489,8 @@ def batch_generate(config_path: str = "simulation_config.json", logs_dir: str = 
     return 0 if success == len(scenario_names) else 1
 
 
-def run_live_scenario(scenario_name: str, config_path: str = "simulation_config.json",
+def run_live_scenario(scenario_name: str, config_path: str = "simulation_confi"
+"g.json",
                        out_log: Optional[str] = None, hold_seconds: float = 2.0,
                        figsize: Tuple[int, int] = (12, 10)) -> Dict:
     """Actually run a scenario (not replay a finished CSV) and watch it live.
@@ -1644,7 +1645,8 @@ FINAL_DEMOS = [
 ]
 
 
-def generate_advanced_demo_videos(config_path: str = "simulation_config.json",
+def generate_advanced_demo_videos(config_path: str = "simulation_co"
+"nfig.json",
                                    media_dir: str = "media", fps: int = 5,
                                    figsize: Tuple[int, int] = (12, 10),
                                    seed: Optional[int] = None) -> Dict[str, bool]:
