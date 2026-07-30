@@ -410,7 +410,7 @@ def plot_pd_vs_collision_risk(config, outdir, seeds):
 def plot_pfa_vs_false_track(config, outdir, seeds):
     values = [0.0, 0.1, 0.2, 0.3, 0.4]
     overrides = [{"radar_false_alarm_probability": v} for v in values]
-    means, cis = sweep_metric(config, "baseline", overrides, seeds, "false_track_count")
+    means, cis = sweep_metric(config, "baseline", overrides, seeds, "false_tracks")
     line_ci_plot(values, means, cis, "False alarm probability (P_FA)", "False track count",
                  "P_FA vs False Track Count", os.path.join(outdir, "pfa_vs_false_track_count.png"))
 
@@ -418,7 +418,7 @@ def plot_pfa_vs_false_track(config, outdir, seeds):
 def plot_clutter_vs_fusion_error(config, outdir, seeds):
     values = [0.0, 0.1, 0.2, 0.3, 0.5]
     overrides = [{"radar_clutter_density": v} for v in values]
-    means, cis = sweep_metric(config, "naive_fusion", overrides, seeds, "fusion_consistency_error")
+    means, cis = sweep_metric(config, "naive_fusion", overrides, seeds, "fused_position_rmse")
     line_ci_plot(values, means, cis, "Clutter intensity", "Fusion consistency error",
                  "Clutter Intensity vs Fusion Error", os.path.join(outdir, "clutter_vs_fusion_error.png"))
 
@@ -543,7 +543,7 @@ def _fusion_mode_metric(config, metric_key, seeds):
 
 
 def plot_fusion_mode_vs_rmse(config, outdir, seeds):
-    labels, means, cis = _fusion_mode_metric(config, "fusion_consistency_error", seeds)
+    labels, means, cis = _fusion_mode_metric(config, "fused_position_rmse", seeds)
     bar_ci_plot(labels, means, cis, "Position RMSE", "Fusion Mode vs Position RMSE",
                 os.path.join(outdir, "fusion_mode_vs_position_rmse.png"))
 
@@ -961,7 +961,7 @@ def plot_ghost_return_vs_false_track(config, outdir, seeds):
     values = [1.0, 2.0, 3.0, 4.0, 5.0]
     overrides_list = [{"extended_target_enabled": True, "mean_returns_per_target": v} for v in values]
     all_x, all_y, point_means = sweep_two_metrics(
-        config, base_scenario, overrides_list, seeds, "ghost_track_count", "false_track_count")
+        config, base_scenario, overrides_list, seeds, "ghost_track_count", "false_tracks")
     scatter_plot(all_x, all_y, "Ghost track count", "False track count",
                  "Ghost-Return Rate vs False-Track Count",
                  os.path.join(outdir, "ghost_return_rate_vs_false_track_count.png"),

@@ -1,6 +1,6 @@
 # Final Result Package — Sanity Check
 
-Automated QA pass over the final result package built by `generate_final_result_package.py` into `results/final/` (62 scenarios x 20 trials = 1240 runs, generated 2026-07-29T08:26:38.789397+00:00).
+Automated QA pass over the final result package built by `generate_final_result_package.py` into `results/final/` (62 scenarios x 20 trials = 1240 runs, generated 2026-07-30T07:47:47.041682+00:00).
 
 **Result: 18/18 checks passed** — all green
 
