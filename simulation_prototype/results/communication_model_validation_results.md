@@ -34,7 +34,7 @@ Deterministic checks of the inter-UAV communication model and channel degradatio
 | PASS | zero_delay | latency steps incremented by zero |  |
 | PASS | fixed_delay | fixed delay communication delivers |  |
 | PASS | fixed_delay | latency steps incremented by fixed amount |  |
-| PASS | random_delay | varying latency simulates random delay | latencies=[1, 5, 1, 4, 1, 3, 4, 5, 2, 5] |
+| PASS | random_delay | varying latency simulates random delay | latencies=[4, 4, 2, 2, 4, 1, 3, 3, 4, 5] |
 | PASS | no_packet_loss | 0% packet loss delivers all messages |  |
 | PASS | low_packet_loss | 10% packet loss drops roughly 10% of messages | delivered=906 |
 | PASS | high_packet_loss | 70% packet loss drops roughly 70% of messages | delivered=292 |
