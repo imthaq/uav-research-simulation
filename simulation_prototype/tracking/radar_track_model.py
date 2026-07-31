@@ -145,6 +145,7 @@ class RadarTrack:
         self.existence_prob = EXIST_PROB_INIT
         self.status = self.TENTATIVE
         self._hit_streak = 1
+        self._last_det = None
 
     def predict(self, dt):
         F = _F(dt)
@@ -207,6 +208,18 @@ class RadarTrack:
             "existence_probability": round(float(self.existence_prob), 4),
             "status": self.status,
         }
+        if getattr(self, "_last_det", None) is not None:
+            row["detection_status"] = self._last_det.get("detection_status")
+            row["probability_of_detection"] = self._last_det.get("probability_of_detection")
+            row["radar_pd_miss_flag"] = self._last_det.get("radar_pd_miss_flag", False)
+            row["false_alarm_flag"] = self._last_det.get("false_alarm_flag", False)
+            row["missed_detection_flag"] = self._last_det.get("missed_detection_flag", False)
+            row["dropout_flag"] = self._last_det.get("dropout_flag", False)
+            row["ghost_track_flag"] = self._last_det.get("ghost_track_flag", False)
+            row["extended_target_fragmentation_flag"] = self._last_det.get("extended_target_fragmentation_flag", False)
+            row["doppler_ambiguity_flag"] = self._last_det.get("doppler_ambiguity_flag", False)
+            row["multipath_false_track_flag"] = self._last_det.get("multipath_false_track_flag", False)
+        return row
 
 
 class RadarTracker:
@@ -298,8 +311,10 @@ class RadarTracker:
             if ti in matched_track:
                 det = detections[matched_track[ti]]
                 track.apply_match(det["x"], det["y"], det.get("confidence"), self.r_std)
+                track._last_det = det
             else:
                 track.apply_miss()
+                track._last_det = None
             rows.append(track.as_row(step))
             still_active.append(track)
 
@@ -323,6 +338,7 @@ class RadarTracker:
                 self.radar_id, self._next_track_num, det["x"], det["y"],
                 det.get("confidence"), self.r_std, step)
             self._next_track_num += 1
+            new_track._last_det = det
             still_active.append(new_track)
             rows.append(new_track.as_row(step))
 

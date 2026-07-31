@@ -1031,6 +1031,7 @@ class Simulation:
             # contacts), and which critical_quality_action (if any) fired.
             "safety_margin_mode": info["safety_margin_mode"],
             "safety_margin_applied": info["safety_margin_applied"],
+            "safety_margin_increase": max(0.0, info["safety_margin_applied"] - self.collision_distance),
             "quality_action_taken": info["quality_action_taken"],
 
             "num_perceived_detections": len(perceived),
@@ -1132,7 +1133,7 @@ def _generate_vision_lidar_detections(uav_id, t, sim):
     return []
 
 
-def run_radar_track_fusion_pipeline(config, scenario_name):
+def run_radar_track_fusion_pipeline(config, scenario_name, attach_dependability=False):
     """Drives one scenario through the full pipeline (Task 11): true
     state -> radar detections (P_D/P_FA/clutter/noise/latency/dropout,
     all via radar_like_model.py) -> per-radar tracks
@@ -1166,6 +1167,9 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
 
     model = RadarLikeModel(config, scenario_name)
     sim = model.sim
+    if attach_dependability:
+        from dependability_controllers import attach_dependability_layer
+        attach_dependability_layer(sim, abstention=True, handoff=True)
     dt = sim.dt
     fusion_mode = sim.fusion_mode
 
@@ -1407,15 +1411,16 @@ def run_radar_track_fusion_pipeline(config, scenario_name):
                 "safety_margin_increase": log_row.get("safety_margin_increase"),
 
                 # Task 24: Radar-specific metrics
-                "ghost_track_flag": log_row.get("ghost_track_flag", False),
-                "extended_target_fragmentation_flag": log_row.get("extended_target_fragmentation_flag", False),
-                "doppler_ambiguity_flag": log_row.get("doppler_ambiguity_flag", False),
-                "multipath_false_track_flag": log_row.get("multipath_false_track_flag", False),
+                # Radar-specific flags and Detection status must be pulled from the 
+                # actual tracker output rows, not the base physics log_row!
+                "ghost_track_flag": (obs_track_row or {}).get("ghost_track_flag", False),
+                "extended_target_fragmentation_flag": (obs_track_row or {}).get("extended_target_fragmentation_flag", False),
+                "doppler_ambiguity_flag": (obs_track_row or {}).get("doppler_ambiguity_flag", False),
+                "multipath_false_track_flag": (obs_track_row or {}).get("multipath_false_track_flag", False),
 
-                # Detection status for calibration metrics
-                "detection_status": log_row.get("detection_status"),
-                "probability_of_detection": log_row.get("probability_of_detection"),
-                "radar_pd_miss_flag": log_row.get("radar_pd_miss_flag", False),
+                "detection_status": (obs_track_row or next((r for r in track_rows if r.get("false_alarm_flag")), {})).get("detection_status"),
+                "probability_of_detection": (obs_track_row or next((r for r in track_rows if r.get("false_alarm_flag")), {})).get("probability_of_detection"),
+                "radar_pd_miss_flag": (obs_track_row or {}).get("radar_pd_miss_flag", False),
             })
 
     metrics = sim._metrics(t)

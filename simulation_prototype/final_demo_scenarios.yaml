@@ -1,0 +1,159 @@
+scenarios:
+  - id: 1
+    name: "clean baseline"
+    purpose: "Demonstrate optimal swarm behavior with ideal sensor and communication conditions."
+    configuration:
+      radar_p_d: 0.95
+      radar_p_fa: 1e-6
+      clutter_rate: 0
+      fusion_mode: "trust-weighted"
+      distributed: false
+    random_seed: 42
+    expected_behavior: "UAVs track targets accurately, maintain formation, and avoid obstacles without false alarms."
+    displayed_metrics: ["position_rmse", "collision_risk", "mission_success"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/baseline_vs_error_scenarios.png"
+    video_path: "../../media/baseline_3d.mp4"
+    status: "PASS"
+
+  - id: 2
+    name: "low P_D"
+    purpose: "Evaluate swarm response when radar frequently misses target detections."
+    configuration:
+      radar_p_d: 0.50
+      radar_p_fa: 1e-6
+      clutter_rate: 0
+      fusion_mode: "trust-weighted"
+    random_seed: 101
+    expected_behavior: "Track coasting logic engages; higher risk of near-misses but mission generally succeeds."
+    displayed_metrics: ["missed_detections", "collision_risk"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/false_negative_vs_collision_risk.png"
+    video_path: "media/basic/calibrated_vs_overconfident_radar.mp4"
+    status: "PASS"
+
+  - id: 3
+    name: "high P_FA"
+    purpose: "Evaluate swarm response to frequent false alarms and ghost tracks."
+    configuration:
+      radar_p_d: 0.95
+      radar_p_fa: 1e-3
+      clutter_rate: 0
+    random_seed: 202
+    expected_behavior: "Tracker gating rejects most false alarms; occasional unnecessary avoidance maneuvers."
+    displayed_metrics: ["false_tracks", "unnecessary_avoidance"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/false_positive_vs_unnecessary_avoidance.png"
+    video_path: "media/basic/radar_ghost_return.mp4"
+    status: "PASS"
+
+  - id: 4
+    name: "heavy clutter"
+    purpose: "Stress test data association under high Poisson clutter."
+    configuration:
+      clutter_rate: 50
+    random_seed: 303
+    expected_behavior: "Tracker maintains true targets but compute time increases; some temporary false tracks appear."
+    displayed_metrics: ["association_errors", "fusion_rmse"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/baseline_vs_error_scenarios.png"
+    video_path: "../../media/heavy_clutter_3d.mp4"
+    status: "PASS"
+
+  - id: 5
+    name: "target crossing"
+    purpose: "Verify data association logic when targets pass close to each other."
+    configuration:
+      scenario_type: "crossing_targets"
+    random_seed: 404
+    expected_behavior: "Track IDs remain consistent after targets cross; no track merging."
+    displayed_metrics: ["track_fragmentation", "association_errors"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/baseline_vs_error_scenarios.png"
+    video_path: "../../media/target_crossing_3d.mp4"
+    status: "PASS"
+
+  - id: 6
+    name: "radar dropout and recovery"
+    purpose: "Observe swarm safety fallback during total radar failure and subsequent recovery."
+    configuration:
+      radar_dropout_duration: 15.0
+    random_seed: 505
+    expected_behavior: "Swarm transitions to safe fallback/hold mode; resumes mission upon radar recovery."
+    displayed_metrics: ["mission_success", "hold_duration"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/dropout_vs_mission_success.png"
+    video_path: "../../media/radar_dropout_3d.mp4"
+    status: "PASS"
+
+  - id: 7
+    name: "communication outage"
+    purpose: "Evaluate distributed fusion resilience when inter-UAV communication fails."
+    configuration:
+      comm_outage_probability: 1.0
+      comm_outage_duration: 20.0
+      distributed: true
+    random_seed: 606
+    expected_behavior: "UAVs rely entirely on local sensors; stale data rejected safely."
+    displayed_metrics: ["stale_messages", "outage_duration"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/dropout_vs_mission_success.png"
+    video_path: "../../media/communication_outage_3d.mp4"
+    status: "PASS"
+
+  - id: 8
+    name: "overconfident faulty sensor"
+    purpose: "Test trust-weighted fusion against a sensor reporting low covariance but high error."
+    configuration:
+      faulty_sensor: true
+      faulty_covariance_multiplier: 0.1
+      faulty_noise_multiplier: 10.0
+    random_seed: 707
+    expected_behavior: "Naive fusion fails; trust-weighted fusion successfully isolates and ignores the faulty sensor."
+    displayed_metrics: ["faulty_sensor_influence", "fusion_rmse"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/fusion_mode_vs_safety_metrics.png"
+    video_path: "../../media/faulty_sensor_3d.mp4"
+    status: "PASS"
+
+  - id: 9
+    name: "centralized fusion"
+    purpose: "Baseline performance metric using a perfect central data fusion node."
+    configuration:
+      distributed: false
+      fusion_mode: "covariance-weighted"
+    random_seed: 808
+    expected_behavior: "Highest accuracy, lowest RMSE, serving as upper bound for distributed performance."
+    displayed_metrics: ["fusion_rmse", "communication_load"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/fusion_mode_vs_safety_metrics.png"
+    video_path: "../../media/centralized_vs_distributed_fusion_3d.mp4"
+    status: "PASS"
+
+  - id: 10
+    name: "distributed fusion"
+    purpose: "Performance evaluation of decentralized Covariance Intersection algorithm."
+    configuration:
+      distributed: true
+      fusion_mode: "covariance-intersection"
+    random_seed: 909
+    expected_behavior: "RMSE slightly higher than centralized, but system is resilient to single-node failures."
+    displayed_metrics: ["fusion_rmse", "communication_load"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/fusion_mode_vs_safety_metrics.png"
+    video_path: "../../media/centralized_vs_distributed_fusion_3d.mp4"
+    status: "PASS"
+
+  - id: 11
+    name: "dynamic-trust recovery"
+    purpose: "Verify that trust levels dynamically degrade during fault and recover after fault clears."
+    configuration:
+      trust_mode: "dynamic"
+      fault_duration: 30.0
+    random_seed: 1010
+    expected_behavior: "Trust decreases rapidly on fault onset and slowly recovers (hysteresis) after fault ends."
+    displayed_metrics: ["sensor_contribution", "fusion_rmse"]
+    csv_path: "results/final_release/scenario_summary.csv"
+    plot_path: "plots/final_release/fusion_mode_vs_safety_metrics.png"
+    video_path: "../../media/fixed_vs_dynamic_trust_3d.mp4"
+    status: "PASS"

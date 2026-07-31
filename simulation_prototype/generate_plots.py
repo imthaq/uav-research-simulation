@@ -979,7 +979,7 @@ def plot_perception_quality_vs_safety_margin(config, outdir, seeds):
             try:
                 run_config = copy.deepcopy(config)
                 run_config["scenarios"][base_scenario].update(overrides)
-                result = run_once(run_config, base_scenario, s)
+                result = run_once(run_config, base_scenario, s, attach_dependability=True)
                 degraded = (result.get("time_in_degraded_mode") or 0) + \
                     (result.get("time_in_critical_mode") or 0)
                 margin = result.get("mean_safety_margin_increase")

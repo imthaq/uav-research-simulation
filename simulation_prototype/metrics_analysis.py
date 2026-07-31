@@ -403,12 +403,13 @@ def confidence_calibration_metrics(rows, num_bins=10):
     }
 
 
-def run_once(config, scenario_name, seed):
+def run_once(config, scenario_name, seed, attach_dependability=False):
     """Runs the full pipeline once and returns a flat metrics dict."""
     run_config = copy.deepcopy(config)
     run_config["sim"]["seed"] = seed
 
-    rows, metrics = run_radar_track_fusion_pipeline(run_config, scenario_name)
+    from simple_swarm_sim import run_radar_track_fusion_pipeline
+    rows, metrics = run_radar_track_fusion_pipeline(run_config, scenario_name, attach_dependability=attach_dependability)
     
     # Swarm metric derivations
     collision_count = sum(1 for r in rows if r.get("collision_flag"))
