@@ -280,7 +280,11 @@ def mean_ci(vals):
     m = statistics.mean(vals)
     if len(vals) < 2:
         return m, 0.0
-    return m, 1.96 * statistics.stdev(vals) / math.sqrt(len(vals))
+    stdev = statistics.stdev(vals)
+    if stdev < 1e-8:
+        return m, 0.0
+    ci = scipy.stats.t.interval(0.95, len(vals)-1, loc=m, scale=stdev/math.sqrt(len(vals)))
+    return m, ci[1] - m
 
 
 def line_ci_plot(x, means, cis, xlabel, ylabel, title, out_path, color=ADV_COLOR):
@@ -322,7 +326,17 @@ def sweep_metric(config, base_scenario, overrides_list, seeds, metric_key):
                 if base_scenario not in run_config["scenarios"]:
                     print(f"Warning: Scenario '{base_scenario}' not found, skipping")
                     continue
-                run_config["scenarios"][base_scenario].update(overrides)
+                for k, v in overrides.items():
+                    if k in ["radar_detection_probability", "radar_false_alarm_probability", "radar_clutter_density"]:
+                        if "perception_errors" not in run_config["scenarios"][base_scenario]:
+                            run_config["scenarios"][base_scenario]["perception_errors"] = {}
+                        run_config["scenarios"][base_scenario]["perception_errors"][k] = v
+                    elif k in ["central_uplink_latency_steps", "central_downlink_latency_steps"]:
+                        if "communication" not in run_config["scenarios"][base_scenario]:
+                            run_config["scenarios"][base_scenario]["communication"] = {}
+                        run_config["scenarios"][base_scenario]["communication"][k] = v
+                    else:
+                        run_config["scenarios"][base_scenario][k] = v
                 result = run_once(run_config, base_scenario, s)
                 val = result.get(metric_key)
                 if val is not None:
@@ -423,8 +437,24 @@ def plot_clutter_vs_fusion_error(config, outdir, seeds):
                  "Clutter Intensity vs Fusion Error", os.path.join(outdir, "clutter_vs_fusion_error.png"))
 
 
+def gather_detection_rows(config, scenarios, seeds):
+    all_rows = []
+    for name in scenarios:
+        if name not in config["scenarios"]:
+            continue
+        for s in range(seeds):
+            try:
+                run_config = copy.deepcopy(config)
+                run_config["sim"]["seed"] = s
+                model = RadarLikeModel(run_config, name)
+                rows = model.run()
+                all_rows.extend(rows)
+            except Exception:
+                continue
+    return all_rows
+
 def plot_range_vs_rmse(config, outdir, seeds):
-    rows = gather_rows(config, ["baseline", "sensor_noise", "env_low_visibility"], seeds)
+    rows = gather_detection_rows(config, ["baseline", "sensor_noise", "env_low_visibility"], seeds)
     pairs = [(r.get("measured_range"), math.hypot(r.get("detected_x", 0) - r.get("true_target_x", 0), 
                                                    r.get("detected_y", 0) - r.get("true_target_y", 0)))
              for r in rows if r.get("measured_range") is not None and r.get("detected_x") is not None]
@@ -444,7 +474,7 @@ def plot_range_vs_rmse(config, outdir, seeds):
 
 
 def plot_snr_vs_error(config, outdir, seeds):
-    rows = gather_rows(config, ["baseline", "sensor_noise", "env_low_visibility"], seeds)
+    rows = gather_detection_rows(config, ["baseline", "sensor_noise", "env_low_visibility"], seeds)
     pairs = [(r.get("radar_snr"), math.hypot(r.get("detected_x", 0) - r.get("true_target_x", 0),
                                                r.get("detected_y", 0) - r.get("true_target_y", 0)))
              for r in rows if r.get("radar_snr") is not None and r.get("detected_x") is not None]
@@ -472,7 +502,7 @@ def plot_latency_vs_response(config, outdir, seeds):
 
 
 def plot_packet_loss_vs_mission_success(config, outdir, seeds):
-    scenario = "no_fusion_matched"
+    scenario = "trust_weighted_fusion"
     if scenario not in config["scenarios"]:
         print(f"Warning: Scenario '{scenario}' not found - using baseline")
         scenario = "baseline"

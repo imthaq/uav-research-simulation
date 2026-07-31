@@ -15,9 +15,12 @@ import csv
 import json
 import os
 import sys
+import warnings
 from collections import defaultdict
 from scipy import stats
 import numpy as np
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -92,7 +95,7 @@ def compute_scenario_stats(scenario_rows):
                     'negative_log_likelihood', 'overconfidence_rate', 'underconfidence_rate']
     
     for metric in metric_names:
-        values = [row.get(metric) for row in scenario_rows if row.get(metric) is not None]
+        values = [row.get(metric) for row in scenario_rows if row.get(metric) not in (None, '')]
         if not values:
             continue
         
@@ -129,7 +132,7 @@ def fusion_mode_comparison(rows):
         mode_values = {}
         for mode, mode_rows in fusion_groups.items():
             values = [float(row.get(metric)) for row in mode_rows 
-                     if row.get(metric) is not None]
+                     if row.get(metric) not in (None, '')]
             if values:
                 mode_values[mode] = values
         
@@ -250,7 +253,7 @@ def perception_parameter_correlation(rows):
             for row in rows:
                 m = row.get(metric)
                 p = row.get(param)
-                if m is not None and p is not None:
+                if m not in (None, '') and p not in (None, ''):
                     try:
                         metric_vals.append(float(m))
                         param_vals.append(float(p))
