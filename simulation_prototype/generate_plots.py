@@ -71,6 +71,7 @@ import copy
 import json
 import math
 import os
+import scipy.stats
 import statistics
 import sys
 import time
@@ -439,10 +440,11 @@ def plot_clutter_vs_fusion_error(config, outdir, seeds):
 
 def gather_detection_rows(config, scenarios, seeds):
     all_rows = []
+    seed_list = range(seeds) if isinstance(seeds, int) else seeds
     for name in scenarios:
         if name not in config["scenarios"]:
             continue
-        for s in range(seeds):
+        for s in seed_list:
             try:
                 run_config = copy.deepcopy(config)
                 run_config["sim"]["seed"] = s
@@ -455,8 +457,8 @@ def gather_detection_rows(config, scenarios, seeds):
 
 def plot_range_vs_rmse(config, outdir, seeds):
     rows = gather_detection_rows(config, ["baseline", "sensor_noise", "env_low_visibility"], seeds)
-    pairs = [(r.get("measured_range"), math.hypot(r.get("detected_x", 0) - r.get("true_target_x", 0), 
-                                                   r.get("detected_y", 0) - r.get("true_target_y", 0)))
+    pairs = [(r.get("measured_range"), math.hypot((r.get("detected_x") or 0) - (r.get("true_target_x") or 0), 
+                                                   (r.get("detected_y") or 0) - (r.get("true_target_y") or 0)))
              for r in rows if r.get("measured_range") is not None and r.get("detected_x") is not None]
     centers, rmse = bin_rmse(pairs, 8)
     if not centers:
@@ -475,9 +477,9 @@ def plot_range_vs_rmse(config, outdir, seeds):
 
 def plot_snr_vs_error(config, outdir, seeds):
     rows = gather_detection_rows(config, ["baseline", "sensor_noise", "env_low_visibility"], seeds)
-    pairs = [(r.get("radar_snr"), math.hypot(r.get("detected_x", 0) - r.get("true_target_x", 0),
-                                               r.get("detected_y", 0) - r.get("true_target_y", 0)))
-             for r in rows if r.get("radar_snr") is not None and r.get("detected_x") is not None]
+    pairs = [(r.get("radar_snr_db"), math.hypot((r.get("detected_x") or 0) - (r.get("true_target_x") or 0),
+                                               (r.get("detected_y") or 0) - (r.get("true_target_y") or 0)))
+             for r in rows if r.get("radar_snr_db") is not None and r.get("detected_x") is not None]
     centers, rmse = bin_rmse(pairs, 8)
     if not centers:
         print("Warning: No data for SNR vs error plot")
@@ -847,15 +849,7 @@ def plot_calibration_reliability_diagram(config, outdir, seeds):
              label="perfect calibration")
     any_data = False
     for arm, color in zip(CALIBRATION_ARMS, ADV_PALETTE):
-        rows = []
-        for s in range(seeds):
-            try:
-                run_config = copy.deepcopy(config)
-                run_config["sim"]["seed"] = s
-                r, _ = run_radar_track_fusion_pipeline(run_config, arm)
-                rows.extend(r)
-            except Exception as e:
-                print(f"Warning: reliability diagram failed for {arm} seed={s}: {e}")
+        rows = gather_detection_rows(config, [arm], seeds)
         if not rows:
             continue
         cal = confidence_calibration_metrics(rows, num_bins=10)
@@ -888,7 +882,10 @@ def plot_calibration_error_vs_collision_risk(config, outdir, seeds):
         for s in range(seeds):
             try:
                 result = run_once(copy.deepcopy(config), arm, s)
-                x, y = result.get("expected_calibration_error"), result.get("collision_risk_count")
+                det_rows = gather_detection_rows(config, [arm], [s])
+                cal_result = confidence_calibration_metrics(det_rows)
+                x = cal_result.get("expected_calibration_error")
+                y = result.get("collision_risk_count")
                 if x is not None and y is not None:
                     xs.append(x)
                     ys.append(y)

@@ -70,6 +70,9 @@ class SimulationData:
         self.steps: int = 0
         self.obstacle_pos: Tuple[float, float] = (50.0, 50.0)
         self.obstacle_radius: float = 5.0
+        # Whether this scenario actually has a static/moving obstacle entity
+        # to draw at all (some scenarios are target-only). See from_rows().
+        self.has_obstacle: bool = True
         # Mission outcome, precomputed once so the renderer can show a
         # definitive SUCCESS/FAILURE instead of only ever "In Progress".
         self.mission_success: bool = False
@@ -109,14 +112,47 @@ class SimulationData:
         data.num_uavs = len(uav_ids)
         data.steps = max(steps_set) + 1 if steps_set else 0
 
+        # Determine whether this scenario actually has an obstacle entity
+        # at all, and its true radius, from the per-row active_entities_summary
+        # JSON column (logs every currently-active entity with its real
+        # kind/x/y/radius). Some scenarios (e.g. target-only scenarios like
+        # target_reappearing_after_dropout) have no static_obstacle/
+        # moving_obstacle entity - sim.py's _obstacle_view() then falls back
+        # to (0.0, 0.0, 0.0) as a harmless bookkeeping default, NOT a real
+        # obstacle to draw. Previously this code unconditionally hardcoded
+        # obstacle_radius=5.0 and always drew a circle at actual_obstacle_x/y,
+        # which for these scenarios rendered a large fake "obstacle" sitting
+        # right on top of the UAVs' start position. Falls back to the old
+        # actual_obstacle_x/y + radius 5.0 behavior only for older logs that
+        # predate the active_entities_summary column.
+        data.has_obstacle = False
         try:
-            data.obstacle_pos = (
-                float(data.rows[0]["actual_obstacle_x"]),
-                float(data.rows[0]["actual_obstacle_y"]),
+            summary_raw = data.rows[0].get("active_entities_summary")
+            entities = json.loads(summary_raw) if summary_raw else []
+            primary = next(
+                (e for e in entities if e.get("kind") in ("static_obstacle", "moving_obstacle")),
+                None,
             )
-            data.obstacle_radius = 5.0
-        except (ValueError, KeyError, TypeError):
+            if primary is not None:
+                data.obstacle_pos = (float(primary["x"]), float(primary["y"]))
+                data.obstacle_radius = float(primary.get("radius", 5.0))
+                data.has_obstacle = True
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
             pass
+
+        if not data.has_obstacle and "active_entities_summary" not in data.rows[0]:
+            # Old-format log with no active_entities_summary column at all -
+            # keep prior behavior (assume a real obstacle at the logged
+            # actual_obstacle_x/y) rather than silently dropping it.
+            try:
+                data.obstacle_pos = (
+                    float(data.rows[0]["actual_obstacle_x"]),
+                    float(data.rows[0]["actual_obstacle_y"]),
+                )
+                data.obstacle_radius = 5.0
+                data.has_obstacle = True
+            except (ValueError, KeyError, TypeError):
+                pass
 
         for row in data.rows:
             flag = row.get("mission_completed_flag")
@@ -426,13 +462,18 @@ class SimulationVisualizer:
         )
         self.ax.add_patch(boundary)
 
-        # Draw obstacle (static). Its legend entry is added explicitly in
+        # Draw obstacle (static), only if this scenario actually has one -
+        # target-only scenarios (e.g. target_reappearing_after_dropout) have
+        # no obstacle entity at all, and drawing a fake one at the (0,0)
+        # bookkeeping default just puts a big red circle on top of the UAVs'
+        # start position. Its legend entry is added explicitly in
         # add_legend(), so no label is set here.
-        ox, oy = self.data.obstacle_pos
-        self.obstacle_circle = patches.Circle(
-            (ox, oy), self.data.obstacle_radius, color="red", alpha=0.6,
-        )
-        self.ax.add_patch(self.obstacle_circle)
+        if self.data.has_obstacle:
+            ox, oy = self.data.obstacle_pos
+            self.obstacle_circle = patches.Circle(
+                (ox, oy), self.data.obstacle_radius, color="red", alpha=0.6,
+            )
+            self.ax.add_patch(self.obstacle_circle)
 
     def _get_colors(self) -> List[str]:
         """Get one distinct, stable color per UAV, evenly spaced around
@@ -1123,7 +1164,15 @@ class SimulationVisualizer:
                 Line2D([0], [0], color="gray", alpha=0.4, label="Comm Link (delivered, colored by sender)"),
                 Line2D([0], [0], color="red", linestyle=":", label="Comm Link (dropped)"),
             ]
-        self.ax.legend(handles=legend_elements, loc="upper right", fontsize=self.FONT_LEGEND)
+        # Moved off upper-right (where goal markers and other scene detail
+        # routinely land - the old full-size legend there was big enough to
+        # hide them entirely) to the left side instead. Anchored below the
+        # info panel (which already occupies the top-left corner) rather
+        # than on top of it, and laid out in 2 columns + a smaller font so
+        # it stays short enough to clear the UAV start cluster lower down.
+        self.ax.legend(handles=legend_elements, loc="upper left", bbox_to_anchor=(0.01, 0.56),
+                        fontsize=self.FONT_LEGEND * 0.7, ncol=2, framealpha=0.75,
+                        borderpad=0.5, labelspacing=0.35, handletextpad=0.4, columnspacing=0.8)
 
     def save_animation(self, output_path: str, fps: int = 5, dpi: int = 80):
         """Generate and save animation as MP4 or GIF."""

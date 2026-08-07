@@ -323,18 +323,13 @@ def radar_specific_metrics(rows):
 
 
 def _calibration_pairs(rows):
-    """Extracts (probability_of_detection, detected) pairs."""
+    """Extracts (confidence, confidence_correct) pairs."""
     pairs = []
     for r in rows:
-        if r.get("false_alarm_flag") or r.get("dropout_flag") or r.get("radar_pd_miss_flag"):
-            continue
-        status = r.get("detection_status")
-        if status not in ("detected", "missed"):
-            continue
-        p = r.get("probability_of_detection")
-        if p is None:
-            continue
-        pairs.append((float(p), status == "detected"))
+        conf = r.get("confidence_score")
+        correct = r.get("confidence_correct")
+        if conf is not None and correct is not None:
+            pairs.append((float(conf), bool(correct)))
     return pairs
 
 

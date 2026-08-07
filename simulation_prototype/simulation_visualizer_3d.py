@@ -164,7 +164,15 @@ class SimulationVisualizer3D:
                  show_track_history: bool = True,
                  show_safety_radius: bool = True,
                  show_mission_path: bool = True,
-                 elev: float = 22.0, azim: float = -60.0):
+                 elev: float = 22.0, azim: float = -60.0,
+                 title_y: float = 0.97, disclaimer_y: float = 0.925):
+        # Figure-fraction y-coordinates for the per-panel title/disclaimer
+        # (see setup_axis). Single-panel videos use the defaults; side-by-
+        # side comparison videos (multiple 3D axes + one shared
+        # fig.suptitle on top) pass lower values so there's room for the
+        # suptitle above without the two colliding - see _side_by_side_video.
+        self.title_y = title_y
+        self.disclaimer_y = disclaimer_y
         self.data = data
         self.radar_data = radar_data
         self.vision_data = vision_data
@@ -197,7 +205,12 @@ class SimulationVisualizer3D:
         # (identical position every step) and a moving one for free.
         self._obstacle_history: List[Tuple[int, float, float, float]] = []
         seen_steps = set()
-        for row in self.data.rows:
+        # Skip entirely for target-only scenarios with no real obstacle
+        # entity (see SimulationData.from_rows in simulation_visualizer.py) -
+        # otherwise this draws a "Target/Obstacle" disc at the (0.0, 0.0)
+        # bookkeeping default, which sits right on top of the UAVs' start
+        # position for those scenarios.
+        for row in (self.data.rows if getattr(self.data, "has_obstacle", True) else []):
             step = int(row["step"])
             if step in seen_steps:
                 continue
@@ -244,9 +257,24 @@ class SimulationVisualizer3D:
             "Z (real altitude)" if self.is_true_3d else "Z (unused - visualization only)",
             fontsize=self.FONT_SUBTITLE)
 
-        self.ax.set_title(
-            f"UAV Swarm \u2014 {self.data.scenario_name}",
-            fontsize=self.FONT_TITLE, fontweight="bold", pad=14)
+        # Title and disclaimer used to both be positioned relative to the
+        # 3D Axes' own bounding box (ax.set_title(...) + ax.text2D at
+        # transAxes y=1.03) - mplot3d's title anchor shifts with the
+        # camera-relative bbox of the tilted 3D axes, so in practice the two
+        # landed on almost the same pixel row and rendered interleaved/
+        # illegible. Anchored to the *figure* instead, at fixed, clearly
+        # separated figure-fraction y-coordinates, so their vertical
+        # spacing is stable no matter the camera angle or axes bbox. Uses
+        # this axes' own horizontal center (not the whole figure's) so
+        # side-by-side comparison videos - multiple 3D axes sharing one
+        # figure - still get one correctly-placed title per panel instead
+        # of both panels' titles landing on top of each other at the
+        # figure's center.
+        bbox = self.ax.get_position()
+        x_center = (bbox.x0 + bbox.x1) / 2
+        self.fig.text(
+            x_center, self.title_y, f"UAV Swarm \u2014 {self.data.scenario_name}",
+            fontsize=self.FONT_TITLE, fontweight="bold", ha="center", va="top")
 
         # The honesty disclaimer this whole module exists to make explicit.
         disclaimer = (
@@ -256,9 +284,9 @@ class SimulationVisualizer3D:
             "3D VISUALIZATION LAYER of a 2D simulation \u2014 no vertical "
             "dynamics or 3D obstacle avoidance are modeled."
         )
-        self.ax.text2D(
-            0.5, 1.03, disclaimer, transform=self.ax.transAxes,
-            fontsize=self.FONT_SUBTITLE, ha="center", color="dimgray", style="italic")
+        self.fig.text(
+            x_center, self.disclaimer_y, disclaimer,
+            fontsize=self.FONT_SUBTITLE, ha="center", va="top", color="dimgray", style="italic")
 
         # Ground plane grid at z=0 for a visual floor reference.
         gx = np.linspace(0, self.data.world_width, 2)
@@ -756,8 +784,14 @@ def _side_by_side_video(config: dict, scenario: str, name: str, title: str,
         visualizers = []
         for i, (sim_data, radar_data, fused_data) in enumerate(panels):
             ax = fig.add_subplot(1, len(panels), i + 1, projection="3d")
+            # Lower than the single-panel default (0.97/0.925): this figure
+            # also carries one shared fig.suptitle across the top (set
+            # below), so each panel's own title/disclaimer need to sit
+            # further down to leave it clear room instead of stacking
+            # directly on top of it.
             viz = SimulationVisualizer3D(sim_data, fig=fig, ax=ax, radar_data=radar_data,
-                                          fused_data=fused_data)
+                                          fused_data=fused_data,
+                                          title_y=0.89, disclaimer_y=0.84)
             visualizers.append(viz)
         max_steps = max(v.data.steps for v in visualizers)
 
@@ -768,7 +802,7 @@ def _side_by_side_video(config: dict, scenario: str, name: str, title: str,
 
         anim = animation.FuncAnimation(fig, animate, frames=max_steps,
                                         interval=1000 // fps, repeat=True)
-        fig.suptitle(title, fontsize=14, fontweight="bold")
+        fig.suptitle(title, fontsize=14, fontweight="bold", y=0.99)
         out_path = os.path.join(media_dir, f"{name}.mp4")
         anim.save(out_path, writer=animation.FFMpegWriter(fps=fps), dpi=100)
         plt.close(fig)
