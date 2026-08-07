@@ -1,12 +1,12 @@
 {
-  "started_at": "2026-08-06T03:51:44.494291+00:00",
-  "overall_wall_clock_seconds": 80.194,
+  "started_at": "2026-08-07T06:24:25.915675+00:00",
+  "overall_wall_clock_seconds": 149.806,
   "overall_status": "PASS",
   "total_trials_run": 1590,
   "total_trials_failed": 0,
   "base_seed": 42,
   "seed_mode": "sequential",
-  "config_path": "/home/bot47/GitProjects/uav-research (Copy)/simulation_prototype/simulation_config.json",
+  "config_path": "/home/bot47/GitProjects/uav-research/simulation_prototype/simulation_config.json",
   "config_sha256_16": "1fc6b245aaefde80",
   "core": {
     "scenarios": [
@@ -1457,9 +1457,9 @@
     "trials_actually_used": 50,
     "budget_estimate": {
       "warmup_trials_run": 21,
-      "warmup_elapsed_seconds": 0.809,
-      "per_trial_seconds_estimate": 0.03853,
-      "projected_seconds_at_target_trials": 13.49,
+      "warmup_elapsed_seconds": 1.545,
+      "per_trial_seconds_estimate": 0.07356,
+      "projected_seconds_at_target_trials": 25.75,
       "time_budget_seconds": 1800.0,
       "decision": "within budget -> using 50 trials"
     },
