@@ -4,7 +4,6 @@ import json
 import copy
 import tkinter as tk
 from tkinter import ttk, messagebox
-import threading
 
 _ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _ROOT_DIR not in sys.path:

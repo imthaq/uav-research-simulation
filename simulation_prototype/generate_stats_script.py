@@ -1,9 +1,8 @@
 import pandas as pd
 import numpy as np
 from scipy import stats
-import os
 
-df = pd.read_csv(r'c:\Users\AntiVenom\Desktop\uav-research\simulation_prototype\results\results_summary.csv')
+df = pd.read_csv(r'results\results_summary.csv')
 df['mission_success_num'] = df['mission_success'].apply(lambda x: 1 if str(x).lower() in ['yes', 'true', '1'] else 0)
 
 # Fill nans for numeric

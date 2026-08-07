@@ -36,10 +36,11 @@ class Perception:
     """Corrupts ground-truth detections into what a UAV actually perceives,
     and attaches a (possibly miscalibrated) confidence value to each one."""
 
-    def __init__(self, params, rng, sensor_range):
+    def __init__(self, params, rng, sensor_range, uav_id=0):
         self.p = params
         self.rng = rng
         self.sensor_range = sensor_range
+        self.uav_id = uav_id
         self._dropout_remaining = 0  # steps left in an ongoing sensor blackout
 
         # Diagnostics describing what happened on the most recent process()
@@ -131,44 +132,124 @@ class Perception:
             if perceived:
                 self.last_noise_applied = True
 
+        # Range-based uncertainty proxy for covariance_weighted_fusion,
+        # computed now - i.e. from whatever position noise is already
+        # applied, but BEFORE any faulty-sensor position bias below - so
+        # it mirrors a real radar's reported covariance: derived from
+        # range/SNR physics, with no way to "know" about a systematic
+        # bias error layered on top of it afterward.
+        for d in perceived:
+            if not d.get("is_phantom"):
+                d["variance"] = round((0.05 + 0.03 * d["distance"]) ** 2, 6)
+
+        # Task 15: a single UAV's sensor can be configured as faulty -
+        # systematically wrong but (via faulty_confidence below)
+        # overconfident about it. faulty_uav_id/faulty_position_bias/
+        # faulty_confidence were previously scenario-config-only: nothing
+        # in this class ever read them, so every "faulty_sensor_*"
+        # scenario ran with zero injected error regardless of fusion_mode,
+        # which is why they all produced identical results. This wires
+        # them in for real, gated to only the configured UAV.
+        is_faulty_uav = (self.p.get("faulty_uav_id") is not None
+                          and self.uav_id == self.p.get("faulty_uav_id"))
+        faulty_bias = self.p.get("faulty_position_bias")
+        if is_faulty_uav and faulty_bias:
+            bx, by = faulty_bias[0], faulty_bias[1]
+            biased = []
+            for d in perceived:
+                if d.get("is_phantom"):
+                    biased.append(d)
+                    continue
+                nd = dict(d)
+                nd["x"] = d["x"] + bx
+                nd["y"] = d["y"] + by
+                nd["distance"] = dist(uav_pos, (nd["x"], nd["y"]))
+                biased.append(nd)
+            perceived = biased
+            if perceived:
+                self.last_noise_applied = True
+
         phantom = self._maybe_phantom(uav_pos)
         if phantom is not None:
             perceived.append(phantom)
             self.last_false_positive = True
 
+        forced_confidence = self.p.get("faulty_confidence") if is_faulty_uav else None
         for d in perceived:
             reported_conf, true_conf = self._confidence_for(d["distance"], d.get("is_phantom", False), noise_on)
+            if forced_confidence is not None and not d.get("is_phantom"):
+                # The faulty sensor self-reports a forced-high confidence
+                # regardless of its (biased, wrong) position - that's what
+                # makes it dangerous: it looks just as trustworthy as a
+                # working sensor to any fusion strategy that only looks at
+                # self-reported confidence.
+                reported_conf = round(clamp(forced_confidence, 0.0, 1.0), 3)
             d["confidence"] = reported_conf
             d["true_confidence"] = true_conf
 
         return perceived
 
 
-def fuse_obstacle_detections(contributions, fusion_mode):
+FUSION_MODES = (
+    "no_fusion", "naive_fusion", "trust_weighted_fusion",
+    "confidence_weighted_fusion", "covariance_weighted_fusion",
+)
+
+
+def fuse_obstacle_detections(contributions, fusion_mode, trust_weights=None):
     """Combines each UAV's own perceived obstacle detection (if any) into a
     single shared belief about where the obstacle actually is.
 
-    contributions: list of (uav_id, x, y, confidence) tuples - one per UAV
-    that currently perceives the obstacle (real detection, not a phantom).
+    contributions: list of (uav_id, x, y, confidence, variance) tuples - one
+    per UAV that currently perceives the obstacle (real detection, not a
+    phantom). variance is a per-detection position-uncertainty proxy (see
+    Perception.process); confidence is the sensor's self-reported (possibly
+    miscalibrated) confidence.
+
+    trust_weights: optional {uav_id: persistent_trust} override, supplied by
+    Simulation when trust_adaptation is enabled for "trust_weighted_fusion" -
+    weights come from each source's slowly-adapting historical-agreement
+    score (see Simulation._update_persistent_trust) instead of its own
+    (possibly-miscalibrated) self-reported confidence. Without this, or for
+    "confidence_weighted_fusion", weighting falls back to raw per-step
+    confidence - both are then equally fooled by a sensor that self-reports
+    high confidence regardless of whether its position is actually right,
+    which is exactly the "fixed trust" vs. "dynamic trust" distinction Task
+    15's faulty-sensor scenarios are built to expose.
 
     Returns None if fusion doesn't apply or nothing to fuse, else a dict
     with the fused x/y/confidence and the list of contributing UAV ids.
     """
     if fusion_mode == "no_fusion" or not contributions:
         return None
+    if fusion_mode not in FUSION_MODES:
+        raise ValueError(f"Unknown fusion_mode: {fusion_mode!r} (expected one of {FUSION_MODES})")
 
-    if fusion_mode == "trust_weighted_fusion":
-        total_w = sum(c[3] for c in contributions)
-        if total_w <= 1e-9:
-            fx = sum(c[1] for c in contributions) / len(contributions)
-            fy = sum(c[2] for c in contributions) / len(contributions)
-        else:
-            fx = sum(c[1] * c[3] for c in contributions) / total_w
-            fy = sum(c[2] * c[3] for c in contributions) / total_w
+    if fusion_mode == "trust_weighted_fusion" and trust_weights:
+        weights = [trust_weights.get(c[0], c[3]) for c in contributions]
+    elif fusion_mode in ("trust_weighted_fusion", "confidence_weighted_fusion"):
+        # Weight = self-reported confidence. A sensor that's wrong but
+        # forced-confident (faulty_confidence) dominates just as hard here
+        # as it would under a real trust-weighted scheme with no historical
+        # adaptation to fall back on - that's the point of comparing this
+        # against covariance_weighted_fusion and dynamic trust below.
+        weights = [c[3] for c in contributions]
+    elif fusion_mode == "covariance_weighted_fusion":
+        # Information-filter-style inverse-variance weighting. variance is
+        # range-derived (see Perception.process), not confidence-derived,
+        # so a sensor with a bad position but a normal-looking range still
+        # gets a normal-looking (undeservedly high) weight here too.
+        weights = [1.0 / max(c[4], 1e-9) for c in contributions]
     else:  # naive_fusion: unweighted average, ignores confidence entirely
-        n = len(contributions)
-        fx = sum(c[1] for c in contributions) / n
-        fy = sum(c[2] for c in contributions) / n
+        weights = [1.0 for _ in contributions]
+
+    total_w = sum(weights)
+    if total_w <= 1e-9:
+        fx = sum(c[1] for c in contributions) / len(contributions)
+        fy = sum(c[2] for c in contributions) / len(contributions)
+    else:
+        fx = sum(c[1] * w for c, w in zip(contributions, weights)) / total_w
+        fy = sum(c[2] * w for c, w in zip(contributions, weights)) / total_w
 
     # More independent UAVs agreeing raises fused confidence a bit
     # (mirrors how corroborating sources reduce uncertainty), capped at 1.0.
@@ -379,8 +460,8 @@ class Simulation:
         self.doppler_ambiguity_count = 0
         self.multipath_false_track_count = 0
 
-        self.perception = [Perception(self.scn, self.rng, self.sensor_range)
-                            for _ in range(self.num_uavs)]
+        self.perception = [Perception(self.scn, self.rng, self.sensor_range, uav_id=i)
+                            for i in range(self.num_uavs)]
         self.reached_goal = [False] * self.num_uavs
 
         # Sensor fusion: "no_fusion" (each UAV uses only its own perception),
@@ -390,6 +471,26 @@ class Simulation:
         # detections across UAVs; phantom (false-positive) detections are
         # never fused since each is a distinct, uncorroborated ghost.
         self.fusion_mode = self.scn.get("fusion_mode", "no_fusion")
+
+        # Task 15: dynamic trust adaptation for trust_weighted_fusion.
+        # trust_adaptation.enabled=False (or absent) keeps the original
+        # "fixed" behavior - fuse_obstacle_detections weights purely by
+        # this step's self-reported confidence. enabled=True instead
+        # tracks each UAV's own persistent, slowly-adapting trust score -
+        # rising a little when its contribution agrees with the swarm
+        # consensus, falling faster when it doesn't - independent of
+        # whatever confidence the sensor itself claims. This is what lets
+        # faulty_sensor_trust_weighted_fusion_dynamic actually discount an
+        # overconfident-but-wrong sensor over the course of a run, instead
+        # of being fooled by it every single step like the "fixed"/
+        # confidence-weighted variants.
+        trust_cfg = self.scn.get("trust_adaptation", {})
+        self.trust_adaptation_enabled = bool(trust_cfg.get("enabled", False))
+        self.persistent_trust = {i: 1.0 for i in range(self.num_uavs)}
+        self._trust_alpha_up = trust_cfg.get("alpha_up", 0.06)
+        self._trust_alpha_down = trust_cfg.get("alpha_down", 0.3)
+        self._trust_agreement_distance = trust_cfg.get("agreement_distance", 2.0)
+        self._trust_disagreement_span = trust_cfg.get("disagreement_span", 5.0)
 
         # Latency: detections are generated each step but only become available
         # to the controller `latency_steps` steps later. Each buffer holds
@@ -494,6 +595,30 @@ class Simulation:
                              "is_parked": self.reached_goal[j]})
         return dets
 
+    def _update_persistent_trust(self, contributions):
+        """EMA-updates self.persistent_trust for every UAV that contributed
+        a detection this step, based on how far its own reported position
+        is from the (unweighted) swarm consensus for that same entity.
+        Runs every step regardless of fusion_mode, same as fusion_model.py's
+        TrustTracker - trust is a slowly-accumulating history, not something
+        that should only start existing the moment trust_weighted_fusion
+        happens to be selected."""
+        if len(contributions) < 2:
+            return
+        cx = sum(c[1] for c in contributions) / len(contributions)
+        cy = sum(c[2] for c in contributions) / len(contributions)
+        for uav_id, x, y, _conf, _var in contributions:
+            err = dist((x, y), (cx, cy))
+            if err <= self._trust_agreement_distance:
+                target = 1.0
+            else:
+                target = clamp(
+                    1.0 - (err - self._trust_agreement_distance) / self._trust_disagreement_span,
+                    0.0, 1.0)
+            old = self.persistent_trust.get(uav_id, 1.0)
+            alpha = self._trust_alpha_up if target >= old else self._trust_alpha_down
+            self.persistent_trust[uav_id] = clamp(old + alpha * (target - old), 0.05, 1.0)
+
     def _apply_fusion(self, raw_percepts):
         """Cross-UAV fusion step. Given each UAV's individually-perceived
         detection list (already corrupted by its own Perception), builds a
@@ -517,10 +642,16 @@ class Simulation:
                 # entities and are never fused, same as before.
                 if d.get("is_phantom") or eid is None or eid.startswith("uav_"):
                     continue
-                contributions_by_id.setdefault(eid, []).append((i, d["x"], d["y"], d.get("confidence", 0.5)))
+                contributions_by_id.setdefault(eid, []).append(
+                    (i, d["x"], d["y"], d.get("confidence", 0.5), d.get("variance", 1.0)))
 
         for eid, contributions in contributions_by_id.items():
-            fused = fuse_obstacle_detections(contributions, self.fusion_mode)
+            self._update_persistent_trust(contributions)
+            trust_weights = (self.persistent_trust
+                              if (self.fusion_mode == "trust_weighted_fusion"
+                                  and self.trust_adaptation_enabled)
+                              else None)
+            fused = fuse_obstacle_detections(contributions, self.fusion_mode, trust_weights=trust_weights)
             if fused is None:
                 continue
 
