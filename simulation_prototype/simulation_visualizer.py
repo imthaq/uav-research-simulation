@@ -4,40 +4,7 @@ Supports live viewing, replay from logs, video export (mp4/gif), side-by-side
 fusion-mode/architecture comparison videos, and a one-shot "advanced demo"
 video suite covering Kalman tracking, sensor fusion, and inter-UAV
 communication.
-
-Task 22 overlay additions on top of the original radar-only overlay:
-  - predicted vs. filtered track position (Kalman "coasting" vs. updated)
-  - measured detection position (radar/vision/LiDAR)
-  - covariance ellipses (tracks, fused estimates, vision/LiDAR measurements)
-  - track status, track history trail, and a false-track heuristic label
-  - stale measurement indicator (vision/LiDAR async-update staleness)
-  - sensor source label + per-measurement confidence/trust
-  - fused track marker (centralized and per-UAV distributed estimates)
-  - inter-UAV communication links, with packet-dropout indication
-  - centralized/distributed fusion architecture labeling
-
-Task 26 overlay additions:
-  - radar operating mode (normal/long_range/high_resolution/degraded/...)
-  - calibrated confidence indicator (green=correct, red=false-alarm)
-  - perception-quality state and critical action taken
-  - adaptive safety margin value and mode
-  - abstention status flag
-  - handoff success/failure indicator
-  - ghost radar returns (multipath, side-lobe, duplicate) with type label
-  - Doppler ambiguity flag on radial-velocity label
-  - cross-modal registration offset (from scenario config)
-  - degraded sensor / reliability state label
-  - recovery state (degraded/critical mode steps)
-  - centralized/distributed fusion state (enhanced: per-step architecture)
 """
-
-# Task 26 note: all new overlay fields are read from existing log columns
-# (ghost_flag, doppler_ambiguity_flag, radar_operating_mode, confidence_correct,
-# safety_margin_applied, abstention_flag, handoff_*_flag, degraded_mode_flag,
-# critical_mode_flag, recovery_time_steps, radar_reliability_state).
-# Registration offset is read from the scenario config's
-# cross_modal_registration block, not from individual detection rows.
-
 import copy
 import csv
 import json

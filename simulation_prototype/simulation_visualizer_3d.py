@@ -813,7 +813,7 @@ def _side_by_side_video(config: dict, scenario: str, name: str, title: str,
         return False
 
 
-def generate_demo_videos_3d(config_path: str = "simulation_prototype/simulation_config.json",
+def generate_demo_videos_3d(config_path: str = "simulation_config.json",
                              media_dir: str = "media", fps: int = 5,
                              figsize: Tuple[int, int] = (7, 6),
                              seed: Optional[int] = None) -> Dict[str, bool]:
@@ -888,7 +888,7 @@ def main():
     parser.add_argument("--figsize", type=int, nargs=2, default=[10, 8])
     parser.add_argument("--elev", type=float, default=22.0, help="Fixed camera elevation angle.")
     parser.add_argument("--azim", type=float, default=-60.0, help="Fixed camera azimuth angle.")
-    parser.add_argument("--config", default="simulation_prototype/simulation_config.json")
+    parser.add_argument("--config", default="simulation_config.json")
     parser.add_argument("--media-dir", default="media")
     parser.add_argument("--demo-videos", action="store_true",
                          help="Generate the 8-video 3D demo suite (baseline, heavy "

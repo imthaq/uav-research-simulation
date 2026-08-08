@@ -54,11 +54,6 @@ class InteractiveDemoApp:
         ttk.Entry(left_frame, textvariable=self.var_seed).grid(row=row, column=1, sticky=tk.EW)
 
         row += 1
-        ttk.Label(left_frame, text="UAV Count:").grid(row=row, column=0, sticky=tk.W)
-        self.var_uav_count = tk.IntVar(value=4)
-        ttk.Entry(left_frame, textvariable=self.var_uav_count).grid(row=row, column=1, sticky=tk.EW)
-
-        row += 1
         ttk.Label(left_frame, text="Radar Settings", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(15,5))
 
         row += 1
@@ -151,7 +146,7 @@ class InteractiveDemoApp:
         
         # Apply overrides
         cfg["sim"]["seed"] = self.var_seed.get()
-        s_cfg["num_uavs"] = self.var_uav_count.get()
+        
         
         cfg["radar"]["radar_detection_probability"] = self.var_pd.get()
         cfg["radar"]["radar_false_alarm_probability"] = self.var_pfa.get()
