@@ -1,11 +1,5 @@
 """
 run_final_demo.py
-
-Task 17: one command that reproduces a small, fast, representative slice
-of this project's pipeline - for sanity-checking a setup (new machine,
-new environment, CI) without paying for the full experiment matrix
-(see run_final_experiments.py for that).
-
 Reuses run_final_simulations.py's own run_group()/write_*() helpers -
 the exact same trial execution, row schema, CSV writers, and metadata
 format the full run uses - so a demo result is directly comparable to,

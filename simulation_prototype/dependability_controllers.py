@@ -1,29 +1,3 @@
-"""Task 17: five dependability controllers, built by composing the
-existing Task 13/14/15 modules rather than reimplementing any of them.
-
-    1. fixed_margin          - Task 13 safety_margin_mode="fixed"
-    2. uncertainty_aware     - Task 13 safety_margin_mode="quality_monitor"
-    3. abstention            - (2) + Task 14 SelectiveDecisionMaker
-    4. handoff               - (2) + Task 15 PerceptionHandoffModel
-    5. dynamic_trust_handoff - full radar/track/fusion pipeline with
-                               trust_weighted_fusion + trust_adaptation
-                               (Task 15 dynamic trust), + handoff on top
-
-Controllers 3-5 need SelectiveDecisionMaker/PerceptionHandoffModel to see a
-per-detection quality verdict and to override that step's motion when they
-fire. Neither module was ever wired into Simulation's actual decision loop
-(both only shipped with their own scripted-timeline CLI demos), so this
-file is that missing wiring - not a rebuild of either module.
-
-Integration approach: monkey-patch Simulation._steer (instance attribute,
-not a subclass) so this works whether `sim` is a plain Simulation or the
-`.sim` RadarLikeModel builds internally for run_radar_track_fusion_pipeline.
-_steer already computes this step's uncertainty margin per detection via
-_quality_level_for/_compute_safety_margin; attach_dependability_layer reuses
-that same per-detection quality verdict rather than re-deriving it, then
-lets the abstention/handoff decision override the velocity _steer already
-picked.
-"""
 import copy
 import os
 import sys
@@ -47,8 +21,7 @@ _LEVEL_ORDER = {GOOD: 0, DEGRADED: 1, CRITICAL: 2}
 
 
 def _resources_for(sim):
-    """available_resources convention both Task 14/15 modules share.
-
+    """
     radar_available is deliberately False here even though radar is this
     project's actual sensor: RADAR_ONLY_FALLBACK/RADAR_ONLY_FALLBACK-as-
     abstention-tier both mean "drop back to a second, independent local

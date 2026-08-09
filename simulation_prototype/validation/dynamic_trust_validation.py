@@ -1,10 +1,3 @@
-"""
-dynamic_trust_validation.py
-
-Task 7: validates fusion_model.py's TrustTracker (the dynamic, cross-step
-trust score maintained per UAV/radar) against controlled cases.
-"""
-
 import os
 import sys
 

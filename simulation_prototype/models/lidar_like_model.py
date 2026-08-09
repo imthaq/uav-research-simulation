@@ -1,9 +1,3 @@
-"""
-lidar_like_model.py
-LiDAR sensor: accurate position/range, shorter range, dropout in adverse weather,
-limited FOV if configured.
-"""
-
 import csv
 import json
 import math

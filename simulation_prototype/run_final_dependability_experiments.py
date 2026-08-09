@@ -1,29 +1,4 @@
 """
-run_final_dependability_experiments.py
-
-Task 23: final dependability experiments. Runs the required comparisons:
-
-  1. calibrated vs uncalibrated confidence
-  2. fixed vs dynamic trust
-  3. fixed vs adaptive safety margin
-  4. no abstention vs abstention
-  5. no handoff vs handoff            [STUB - see HandoffStub below]
-  6. centralized vs distributed fusion
-  7. covariance fusion vs Covariance Intersection
-  8. single fault vs combined fault
-  9. normal radar vs ghost/aliasing radar conditions
-
-For each (except #5), saves under --output-dir/<comparison_name>/:
-  raw_log_<arm>.json        - every trial's raw output rows
-  seeds.json                - seeds used, per arm
-  configuration_used.json   - the exact scenario config(s) used
-  failed_runs.json          - any trial that raised, with traceback
-  run_summary.json          - one row per trial, the metric(s) compared
-  aggregated_results.json   - mean/stdev per arm + the head-to-head verdict
-
-Plus a top-level dependability_report.md (2-3 lines per comparison) and
-run_metadata.json (overall seeds/config/timing/pass-fail).
-
 Usage:
     python run_final_dependability_experiments.py
     python run_final_dependability_experiments.py --trials 5 --output-dir results/dependability

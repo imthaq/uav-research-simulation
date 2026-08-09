@@ -1,5 +1,3 @@
-"""Task 19: combined-fault scenarios.
-"""
 import json
 import os
 import sys

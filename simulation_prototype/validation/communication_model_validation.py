@@ -1,11 +1,3 @@
-"""
-communication_model_validation.py
-
-Task 6: Run communication-model validation
-
-Validates the communication model and its interactions with the fusion layer.
-"""
-
 import math
 import os
 import random

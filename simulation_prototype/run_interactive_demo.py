@@ -92,7 +92,7 @@ class InteractiveDemoApp:
         row += 1
         ttk.Label(left_frame, text="Fusion Mode:").grid(row=row, column=0, sticky=tk.W)
         self.var_fusion = tk.StringVar(value="naive_fusion")
-        ttk.Combobox(left_frame, textvariable=self.var_fusion, values=["no_fusion", "naive_fusion", "confidence_weighted_fusion", "trust_weighted_fusion", "covariance_weighted_fusion", "covariance_intersection_fusion"], state="readonly").grid(row=row, column=1, sticky=tk.EW)
+        ttk.Combobox(left_frame, textvariable=self.var_fusion, values=["no_fusion", "naive_fusion", "confidence_weighted_fusion", "trust_weighted_fusion", "covariance_weighted_fusion"], state="readonly").grid(row=row, column=1, sticky=tk.EW)
 
         row += 1
         ttk.Label(left_frame, text="Trust Mode:").grid(row=row, column=0, sticky=tk.W)

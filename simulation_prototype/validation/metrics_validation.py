@@ -1,20 +1,5 @@
-"""
-metrics_validation.py
-
-Validates each metric calculation against a small, hand-computable
-example - the goal is a human can check the expected number on paper,
-not that the simulation "looks reasonable".
-
-Tests cover Tracking, Fusion, Swarm, and Communication metrics.
-Every metric test prints PASS/FAIL.
-
-Run directly:
-    python metrics_validation.py
-"""
 import math
-import statistics
 import sys
-import os
 
 FAILURES = []
 

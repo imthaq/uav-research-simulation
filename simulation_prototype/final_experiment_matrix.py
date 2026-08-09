@@ -1,37 +1,3 @@
-"""Task 22: freeze the final dependability experiment matrix.
-
-A manifest, not a run - no simulation executes here, so this is cheap to
-regenerate any time simulation_config.json, CONTROLLERS, or the Task
-19/20 scenario/size lists change. Reuses, rather than re-derives:
-  - build_experiment_matrix.py's CORE_SCENARIOS (Task 8) for the
-    single-factor stress scenarios and its _radar_configuration_summary/
-    _communication_condition helpers for summarizing them
-  - dependability_controllers.CONTROLLERS (Task 17) for controller mode/
-    handoff mode/calibration mode (safety_margin_mode is this project's
-    calibration-mode knob - see dependability_controllers.py's own
-    docstring)
-  - experiments.combined_fault_scenarios.SCENARIOS (Task 19) for the
-    combined-fault rows
-  - experiments.scalability_experiments.SWARM_SIZES (Task 20) for the
-    UAV-count rows
-
-Four sections, not a full cartesian product of scenarios x controllers x
-sizes (build_experiment_matrix.py's own docstring already made that call
-for Task 8 - a focused core set, not every combination):
-  A. controller comparison  - baseline scenario, all 5 controllers
-     (this IS the comparison the matrix needs to settle, so it gets the
-     highest trial count)
-  B. failure-envelope confirmation - the Task 18 axes that actually
-     flipped the swarm unsafe, at controller 5 (the most complete
-     pipeline - same choice Task 18/19 already made)
-  C. combined-fault confirmation - Task 19's 8 scenarios, controller 5
-  D. scalability - Task 20's swarm sizes, controller 5, baseline scenario
-
-ponytail: target_count is read off each scenario's `entities` override
-(moving_target entries) the same way Simulation itself resolves entities
-(scenario -> world -> single default obstacle, 0 targets); it does not
-run anything to count them.
-"""
 import csv
 import json
 import os

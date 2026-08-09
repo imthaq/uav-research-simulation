@@ -1,27 +1,3 @@
-"""Task 20: scalability experiments.
-
-Same controller-5 pipeline as Tasks 18/19 (run_stress_pipeline,
-instrument=True), just varying swarm size instead of a fault parameter.
-start_positions only ships 4 entries in simulation_config.json, so this
-generates a grid of them for larger swarms - everything else (obstacle,
-world bounds, formation spacing) stays at config defaults.
-
-Metrics not already on sim._metrics()/instrument's output:
-  - communication_load   - message_count: total per-UAV track messages
-    handed to fuse_step over the whole run (grows with num_uavs*steps).
-  - fusion_update_time    - mean wall-clock time per fuse_step call (ms).
-  - centralized_fusion_bottleneck - total wall-clock time fuse_step spent
-    across the whole run (ms) - this is what would start to dominate
-    runtime if centralized fusion doesn't scale.
-  - distributed_fusion_consistency - mean spread (std, meters) across
-    UAVs' own pre-fusion track estimates of the shared obstacle each
-    step; this project has no separate distributed-architecture mission
-    pipeline to compare against (fuse_step here is always the
-    centralized-style single fusion pass - see fusion/fusion_model.py's
-    fuse_centralized/fuse_distributed split), so this is the proxy: how
-    much the swarm's raw, unfused per-UAV perception already disagrees
-    before any fusion algorithm gets to reconcile it, at each size.
-"""
 import copy
 import csv
 import json

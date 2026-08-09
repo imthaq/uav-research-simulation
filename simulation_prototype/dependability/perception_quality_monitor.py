@@ -1,22 +1,3 @@
-"""Task 12: runtime perception-quality monitor.
-
-Estimates how much a downstream consumer (fusion, planning, control)
-should currently trust a track's perception right now, using only
-signals a real system already has on hand at runtime: track covariance,
-track age, missed-update count, sensor agreement, innovation/residual
-magnitude, confidence calibration error, communication age, sensor
-dropout rate, and the existing dynamic trust value (see
-fusion/fusion_model.py's TrustTracker, which already computes several of
-these per step).
-
-It NEVER uses true position error. There is no ground-truth parameter
-anywhere in this module's public API - not "unused for now", structurally
-absent - so a caller cannot even accidentally plumb truth into the score.
-_self_check() asserts this directly by inspecting the public method
-signatures.
-
-Output is one of GOOD / DEGRADED / CRITICAL per track per step.
-"""
 import argparse
 import json
 

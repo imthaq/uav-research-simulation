@@ -1,22 +1,3 @@
-"""
-controller_comparison.py
-
-Task 17: dependability-controller comparison. Runs the five controllers
-in dependability_controllers.CONTROLLERS across a set of scenarios/trials
-and reports:
-
-    collision risk (collision_count), near misses, mission success,
-    formation error, mission delay, unnecessary HOLD time,
-    unnecessary avoidance, correct/failed handoff count, recovery time
-
-Same CLI/CSV-writing shape as ablation_experiments.py, next to it.
-
-mission_delay_s: this project has no standalone "reference/direct-flight
-time" metric to diff against, so mission_delay_s is reported relative to
-controller 1 (fixed_margin) on the *same scenario+seed* - extra wall-clock
-time (steps_run * dt) each more-cautious controller took to reach the same
-outcome. Controller 1's own mission_delay_s is always 0.0 by construction.
-"""
 import argparse
 import csv
 import json

@@ -175,19 +175,6 @@ that accumulates across steps within a run:
     - confidence is high and covariance is tight (or tightening) -
       "confidence and covariance improve".
     - the source has been reporting fresh, non-dropped-out data.
-
-TrustTracker is intentionally *not* wired in by default - build_fused_log
-creates one per (scenario, architecture) run when trust_adaptation is
-enabled (on by default; see "trust_adaptation" config block / --disable-
-adaptive-trust) and carries it across every step of that run, exactly the
-way a real onboard trust estimator would persist across a mission rather
-than resetting every step. It composes with, and is independent of, both
-existing rate/reliability layers: communication.max_staleness_steps still
-hard-rejects sources outright before trust ever sees them, and the
-per-step communication channel (packet loss / range / corruption) still
-governs which distributed broadcasts even arrive - persistent_trust only
-adjusts how much a source that *did* arrive and pass staleness rejection
-gets weighted.
 """
 
 import argparse

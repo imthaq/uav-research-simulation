@@ -1,35 +1,3 @@
-"""Task 14: selective decision-making and abstention.
-
-Sits directly downstream of perception_quality_monitor.py (Task 12). Where
-Task 13's safety-margin logic in simple_swarm_sim.py only ever widens/
-slows a UAV's *aggressive* (goal-seeking + reactive-avoidance) decision,
-this module gives a UAV permission to abstain from that aggressive
-decision altogether when perception quality is insufficient, and choose
-from a graded menu of fallback behaviors instead of forcing a single
-one-size-fits-all response:
-
-    HOLD position
-    reduce speed
-    increase formation spacing
-    wait for another radar update
-    use radar-only fallback
-    use LiDAR-only fallback at short range
-    request another UAV's track
-    transfer decision to centralized fusion
-    mark decision as unsafe to execute
-
-Severity picks the tier, available resources pick the specific fallback
-within that tier, and a stuck-in-HOLD-too-long escalation makes sure the
-system doesn't loop on a fallback that isn't actually resolving anything -
-it flags the decision as unsafe to execute (for a human/higher-level
-authority) instead. Every state transition is logged with what triggered
-it, why, what was selected, how long the episode has lasted, and - once
-it ends - how it ended.
-
-Like perception_quality_monitor.py, this module NEVER uses true position
-error or any other ground-truth field - there is no such parameter
-anywhere in its public API, by design (see _self_check).
-"""
 import argparse
 import csv
 import json

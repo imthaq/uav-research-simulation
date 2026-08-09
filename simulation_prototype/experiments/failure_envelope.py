@@ -1,24 +1,3 @@
-"""Task 18: failure-envelope parameter sweeps.
-
-One parameter at a time, holding everything else at its scenario-config
-default, using controller 5 (dynamic_trust_handoff - the full radar/
-track/fusion/handoff pipeline, and the only one of the Task 17
-controllers with something to say about every parameter below) as the
-single representative controller. Task 17 already covers cross-
-controller comparison; re-running all five here per parameter would be
-5x the cost for a question ("when does the SWARM become unsafe") that
-doesn't depend on which controller is driving.
-
-Each (parameter, value) point runs SEEDS_PER_POINT seeds and is
-classified by the worst (most severe) outcome across those seeds:
-    SAFETY FAILURE          - any real collision occurred
-    MISSION FAILURE         - no collision, but the swarm didn't finish
-                              (stuck in HOLD / handoff, or ran out of steps)
-    DEGRADED BUT FUNCTIONAL - finished, no collision, but had near-misses
-                              and/or formation error well above baseline
-    SAFE                    - finished, no collision, no near-misses,
-                              formation error close to baseline
-"""
 import copy
 import csv
 import math

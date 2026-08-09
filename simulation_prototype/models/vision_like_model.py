@@ -1,9 +1,3 @@
-"""
-vision_like_model.py
-Vision sensor: strong classification/confidence, limited FOV, occlusion, lighting.
-Generates optical/camera detections with position (x,y), confidence, size estimates.
-"""
-
 import csv
 import json
 import math

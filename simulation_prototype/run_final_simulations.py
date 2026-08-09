@@ -1,23 +1,4 @@
 """
-run_final_simulations.py
-
-Task 9: runs the final, repeated Monte Carlo simulations for this project
-and saves everything needed to trust and reproduce the results:
-
-  - random seed             (per trial, plus the master --base-seed)
-  - configuration            (the exact config used, hashed + copied verbatim)
-  - raw log                  (per-trial step-level CSV, plus a combined log)
-  - summary                  (per-scenario/per-comparison aggregated stats)
-  - runtime                  (wall-clock time, per trial and totals)
-  - PASS/FAIL status         (did the trial execute cleanly and produce a
-                               usable metrics dict - an execution-health
-                               check, kept separate from mission_success,
-                               which is a *research* outcome, not a
-                               validity check)
-
-This builds directly on run_experiments.py (imported, not reimplemented)
-and adds the two-tier trial plan Task 9 asks for:
-
   1. Every "core" scenario (every scenario defined in simulation_config.json)
      gets at least CORE_TRIALS (20) trials.
   2. The scenarios that most directly compare fusion modes - see
@@ -28,7 +9,6 @@ and adds the two-tier trial plan Task 9 asks for:
      --time-budget-seconds, those scenarios are quietly capped back down to
      CORE_TRIALS instead, and the fallback is recorded in the metadata/status
      output (never fails silently).
-
 Usage:
     python run_final_simulations.py
     python run_final_simulations.py --time-budget-seconds 600

@@ -1,34 +1,3 @@
-"""
-tracker_validation.py
-
-Task 4: validates the Kalman-filter + gated nearest-neighbor tracker in
-tracking/radar_track_model.py against controlled, deterministic detection
-sequences fed straight into RadarTracker - not the full radar+tracker
-pipeline, just the tracker's own state machine and filter math:
-
-  - constant-velocity target
-  - no measurement noise
-  - low measurement noise
-  - one missed detection
-  - several missed detections
-  - clutter near target
-  - two crossing targets
-  - track deletion
-  - target reappearance
-
-...confirming: prediction is correct, covariance updates, gating rejects
-distant clutter, track IDs remain stable where possible, and lost-track
-logic works.
-
-Each check is a controlled case with a known expected answer, asserted
-with a small numerical tolerance. Results are printed and written to
-results/tracker_validation_results.md.
-
-Usage:
-    python tracker_validation.py
-"""
-
-import math
 import os
 import random
 import sys

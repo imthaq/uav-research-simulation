@@ -1,40 +1,5 @@
-"""
-quality_monitor_validation.py
-
-Task 27: validates perception_quality_monitor.py against deterministic,
-hand-computable cases.  Every expected value is derived analytically from
-the module's published formulas and thresholds (COVARIANCE_TRACE_REFERENCE,
-GOOD_THRESHOLD, CRITICAL_THRESHOLD, SIGNAL_WEIGHTS) so a reviewer can
-cross-check by substitution.
-
-  T01 – _score_covariance: known trace values
-  T02 – _score_age: 0/partial/mature
-  T03 – _score_missed_updates: 0/ceiling/over-ceiling
-  T04 – _score_agreement: clamp to [0,1]
-  T05 – _score_innovation: zero/gate boundary
-  T06 – _score_calibration: zero error / max error
-  T07 – _score_communication_age: half-life decay
-  T08 – _score_dropout_rate: 0 / ceiling / above
-  T09 – _score_trust: clamp to [0,1]
-  T10 – None inputs -> None score (every scorer)
-  T11 – composite score = weighted average (2-signal case, hand-computed)
-  T12 – evaluate: all-good signals -> GOOD
-  T13 – evaluate: all-bad signals -> CRITICAL
-  T14 – evaluate: no signals at all -> CRITICAL / score=None (fail-safe)
-  T15 – evaluate: partial signals -> normalized score, not 0
-  T16 – evaluate_track_row: pulls covariance/age/missed_count from row dict
-  T17 – evaluate_track_row: JSON-string covariance parsed correctly
-  T18 – GOOD > DEGRADED > CRITICAL score ordering for canonical tracks
-  T19 – custom weights change composite score in expected direction
-  T20 – no ground-truth parameter on any public method (API safety check)
-
-Run directly:
-    python quality_monitor_validation.py
-"""
-
 import inspect
 import json
-import math
 import os
 import sys
 

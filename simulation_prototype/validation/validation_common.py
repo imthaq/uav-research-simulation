@@ -1,11 +1,3 @@
-"""
-validation_common.py
-
-Shared plumbing for the model-validation scripts (radar_model_validation.py,
-tracker_validation.py, fusion_validation.py): a tiny results collector plus
-a markdown report writer, so each script only has to define its own checks.
-"""
-
 import os
 
 

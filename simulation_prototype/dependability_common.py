@@ -1,17 +1,3 @@
-"""
-dependability_common.py
-
-Task 23: shared plumbing for run_final_dependability_experiments.py.
-
-Every comparison in that script follows the same shape - run N seeded
-trials of each side of a pair/group, catch and record any trial that
-raises instead of letting one bad trial kill the whole comparison, and
-save (a) raw per-trial output, (b) the seeds used, (c) the exact
-scenario configuration used, (d) a record of any failed runs, and
-(e) an aggregated summary. This module is that shape, factored out once
-instead of six times.
-"""
-
 import copy
 import json
 import os

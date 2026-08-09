@@ -1,37 +1,3 @@
-"""
-handoff_validation.py
-
-Task 27: validates perception_handoff_model.py against deterministic,
-hand-computable cases.  Every expected output follows directly from the
-trigger thresholds and mode-priority tables defined in that module.
-
-  T01 – evaluate_triggers: no signal -> no triggers fire
-  T02 – evaluate_triggers: explicit sensor_failed=True -> SENSOR_FAILURE fires
-  T03 – evaluate_triggers: dropout_rate >= ceiling -> SENSOR_FAILURE fires
-  T04 – evaluate_triggers: perception_quality_level=CRITICAL -> CRITICAL_QUALITY
-  T05 – evaluate_triggers: sensor_disagreement >= threshold -> SENSOR_DISAGREEMENT
-  T06 – evaluate_triggers: covariance trace >= EXCESSIVE threshold -> EXCESSIVE_COV
-  T07 – evaluate_triggers: missed_updates >= ceiling -> REPEATED_MISSED_DETECTIONS
-  T08 – evaluate_triggers: comm_age >= STALE threshold -> STALE_DISTRIBUTED_TRACK
-  T09 – evaluate_triggers: communication_recovered=True -> COMMUNICATION_RECOVERY
-  T10 – evaluate_triggers: multiple triggers fire; TRIGGER_PRECEDENCE order kept
-  T11 – mode selection: SAFE_HOLD when no resources available
-  T12 – mode selection: radar-only fallback when radar is the only resource
-  T13 – mode selection: sensor-disagreement trigger prefers peer/centralized over local
-  T14 – mode selection: stale-distributed-track trigger excludes REQUEST_PEER_TRACK
-  T15 – PerceptionHandoffModel.decide: healthy track -> NO_HANDOFF
-  T16 – PerceptionHandoffModel.decide: failed sensor -> triggers SAFE_HOLD with no resources
-  T17 – PerceptionHandoffModel.decide: failed sensor + radar available -> RADAR_ONLY_FALLBACK
-  T18 – PerceptionHandoffModel.decide: episode lifecycle — triggered, then resolved
-  T19 – PerceptionHandoffModel.decide: duration_steps increments each step
-  T20 – PerceptionHandoffModel.handing_off / close_all lifecycle
-  T21 – PerceptionHandoffModel.summary: correct episode/mode/trigger counts
-  T22 – no ground-truth parameter on any public method (API safety check)
-
-Run directly:
-    python handoff_validation.py
-"""
-
 import inspect
 import os
 import sys
@@ -42,7 +8,7 @@ for _p in (_ROOT, _DEPENDABILITY_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from perception_handoff_model import (
+from dependability.perception_handoff_model import (
     PerceptionHandoffModel, evaluate_triggers,
     NO_HANDOFF, RADAR_ONLY_FALLBACK, LIDAR_ONLY_FALLBACK,
     REQUEST_PEER_TRACK, CENTRALIZED_FUSION_HANDOFF, SAFE_HOLD,
@@ -56,7 +22,7 @@ from perception_handoff_model import (
     OUTCOME_RECOVERED, OUTCOME_UNRESOLVED_AT_END,
     EVENT_TRIGGERED, EVENT_RESOLVED,
 )
-from perception_quality_monitor import CRITICAL, GOOD
+from dependability.perception_quality_monitor import CRITICAL, GOOD
 from validation.validation_common import Checker
 
 _c = Checker()

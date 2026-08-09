@@ -1,11 +1,3 @@
-"""
-Task 14: Final Experiment Matrix Runner
-
-Reads `results/final_experiment_matrix.csv` (created in Task 12) and executes
-every scenario listed, saving all required artifacts (raw logs, configurations, 
-random seeds, run-level metrics, scenario summaries, runtime, PASS/FAIL statuses).
-"""
-
 import argparse
 import copy
 import csv

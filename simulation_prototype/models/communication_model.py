@@ -1,20 +1,3 @@
-"""
-communication_model.py
-
-Models the unreliable inter-UAV/inter-node link that fusion messages
-(track uplinks, peer-to-peer broadcasts, central broadcasts) travel over:
-message delay, dropout/packet loss, limited communication range, stale
-track rejection, and corrupted confidence/reliability values.
-
-fusion_model.py's distributed architecture uses this instead of its old
-inline comm_drop_probability scalar (see CommunicationChannel + from_config
-below); it's also directly usable/testable standalone.
-
-Nothing here reads ground truth - range gating uses each side's own
-reported (radar/track) position, exactly what a real inter-UAV link would
-have to work with.
-"""
-
 import math
 import random
 

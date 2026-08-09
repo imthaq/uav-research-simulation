@@ -1,39 +1,3 @@
-"""
-fusion_validation.py
-
-Validates the multi-source fusion math in fusion/fusion_model.py
-against controlled cases built directly from sensor-track-shaped rows.
-
-Tests include:
-- identical radar and vision measurements
-- radar more accurate than vision
-- vision more accurate than radar
-- LiDAR more accurate at short range
-- one stale sensor
-- one dropped sensor
-- one unavailable sensor
-- one high-confidence wrong sensor
-- one low-confidence correct sensor
-- sensor disagreement
-- correlated estimates
-- Covariance Intersection, where implemented
-- centralized fusion
-- distributed fusion
-- delayed communicated track
-
-Confirms expected:
-- fused position
-- fused covariance
-- source weighting
-- stale-data rejection
-- missing-sensor handling
-- trust behavior
-- no use of ground truth during fusion
-- distributed fusion uses only available messages
-
-Every test prints PASS/FAIL.
-"""
-
 import json
 import math
 import os

@@ -1,27 +1,3 @@
-"""
-build_experiment_matrix.py
-
-Task 8: freezes the final experiment matrix - a focused set of core
-scenarios (not every possible combination) to run for the project's
-final results, written to results/final_experiment_matrix.csv.
-
-This reads scenario parameters straight off simulation_config.json (the
-same source of truth run_experiments.py already uses) rather than typing
-them out by hand, so the matrix can never silently drift out of sync
-with the config: rerun this script any time simulation_config.json
-changes and the CSV regenerates from the current values.
-
-CORE_SCENARIOS below is the one place the *selection* of scenarios (and
-which architecture/trial count each should run under) is decided - everything
-else (fusion mode, communication preset, radar overrides) is read from the
-config for the scenario id given, the same way build_run_matrix() in
-run_experiments.py already turns scenario names + trial count into a run
-list, just one level up: which scenarios belong in the frozen matrix at all.
-
-Usage:
-    python build_experiment_matrix.py
-"""
-
 import csv
 import json
 import os

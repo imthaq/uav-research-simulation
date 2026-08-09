@@ -22,48 +22,6 @@ pipeline directly instead. Saved into plots/advanced/:
   risk, fusion mode vs {position RMSE, collision risk, mission success},
   centralized vs distributed fusion, static vs dynamic trust, tracking
   performance by scenario, confidence intervals for major results.
-
-Final set - the 13 plots required for the final deliverable, a curated
-subset of the advanced set (2 of them, P_D vs missed response and P_D vs
-collision risk, are new) saved into plots/final/:
-
-  P_D vs missed response, P_D vs collision risk, P_FA vs false-track
-  count, clutter vs fusion RMSE, range vs radar position error, latency
-  vs response time, packet loss vs mission success, fusion mode vs
-  {position RMSE, collision risk, mission success}, centralized vs
-  distributed fusion, fixed vs dynamic trust, confidence intervals for
-  main comparisons.
-
-Dependability set - Task 25's 15 final dependability plots, saved into
-plots/dependability/: calibration reliability diagram, calibration
-error vs collision risk, registration error vs fusion RMSE, sensor
-correlation vs covariance consistency, Doppler ambiguity vs response
-error, ghost-return rate vs false-track count, perception quality vs
-safety margin, abstention threshold vs {mission success, mission
-delay}, handoff strategy vs {collision risk, recovery time}, combined
-fault severity vs mission success, swarm size vs {communication load,
-simulation runtime}, and the final failure-envelope heatmap. Several of
-these drive dependability_controllers.py / experiments/failure_envelope.py
-directly (real handoff/abstention closed-loop metrics) rather than
-results_summary.csv; two knobs are substituted for a dead code path -
-see the docstrings on plot_registration_error_vs_fusion_rmse and
-plot_abstention_threshold_vs_mission_outcomes.
-
-Run from the simulation_prototype/ folder:
-    python generate_plots.py
-Optional flags:
-    --summary results/results_summary.csv   (basic-set input file)
-    --outdir  plots                         (basic-set output folder)
-    --config  simulation_config.json        (advanced-set input config)
-    --advanced-outdir plots/advanced        (advanced-set output folder)
-    --final-outdir plots/final              (final-set output folder)
-    --dependability-outdir plots/dependability  (dependability-set output folder)
-    --seeds   4                             (seeds per advanced/final/dependability data point)
-    --skip-advanced                         (skip the exploratory advanced set)
-    --skip-final                            (skip the curated final set)
-    --skip-dependability                    (skip the Task 25 dependability set)
-    --final-only                            (only the curated final set)
-    --dependability-only                    (only the Task 25 dependability set)
 """
 
 import argparse

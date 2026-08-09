@@ -1,35 +1,3 @@
-"""
-calibration_validation.py
-
-Task 27: validates the confidence-calibration math that lives in
-metrics_analysis.confidence_calibration_metrics (and its helpers
-_calibration_pairs / _reliability_bins) against small, hand-computable
-cases where every expected number can be derived on paper:
-
-  T01 – _calibration_pairs: row filtering rules
-         (false-alarm, dropout, pd_miss, and status=unknown rows
-          must be excluded; detected and missed rows that have a
-          valid probability_of_detection are included)
-  T02 – Brier score with known pairs
-         brier = mean((conf-y)^2); 2 pairs -> exact scalar
-  T03 – negative log-likelihood with known pairs
-         nll = -mean(y*log(p) + (1-y)*log(1-p))
-  T04 – ECE / MCE in a two-bin case
-         bin0: conf=0.1, acc=0 -> gap 0.1
-         bin1: conf=0.9, acc=1 -> gap 0.1
-         ECE = MCE = 0.1
-  T05 – perfect-calibration case: ECE and Brier score -> 0
-  T06 – fully miscalibrated (high conf, always wrong): ECE -> max
-  T07 – overconfidence / underconfidence rates
-  T08 – n_samples count reported correctly
-  T09 – empty rows -> all-None result, n_samples=0
-  T10 – radar_like_model.calibration_pairs: confidence_correct True/False
-         filtering (None rows excluded; True/False rows included)
-
-Run directly:
-    python calibration_validation.py
-"""
-
 import math
 import os
 import sys

@@ -25,7 +25,6 @@ import csv
 import json
 import os
 import sys
-import random
 from datetime import datetime
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
