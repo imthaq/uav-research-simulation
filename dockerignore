@@ -1,0 +1,21 @@
+# Keep the build context small and the image reproducible
+**/__pycache__/
+**/*.pyc
+
+# Large pre-rendered assets — not needed to run simulations, only to view past results
+media/
+simulation_prototype/media/
+simulation_prototype/plots/
+simulation_prototype/logs/
+simulation_prototype/results/
+
+# Non-code research artifacts not needed inside the image
+notes/
+final_acceptance/
+tables/
+README.md
+
+.git/
+.dockerignore
+Dockerfile
+docker-compose.yml

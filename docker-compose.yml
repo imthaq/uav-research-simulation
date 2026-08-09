@@ -1,0 +1,10 @@
+services:
+  uav-sim:
+    build: .
+    image: uav-swarm-sim:latest
+    volumes:
+      # Persist results/logs/plots on the host instead of losing them when the container exits
+      - ./results:/app/simulation_prototype/results
+      - ./logs:/app/simulation_prototype/logs
+      - ./plots:/app/simulation_prototype/plots
+    command: ["python", "run_final_demo.py"]
